@@ -74,7 +74,7 @@ zip -9r PortMaster.zip PortMaster/ \
     -x PortMaster/\*_flag \
     -x '*.DS_Store'
 
-if [[ "$1" == "stable" ]] || [ "$MAKE_INSTALL" = "Y" ]; then
+#if [[ "$1" == "stable" ]] || [ "$MAKE_INSTALL" = "Y" ]; then
     echo "Creating Installers"
 
     for arch in "aarch64" "x86_64"; do
@@ -125,7 +125,7 @@ if [[ "$1" == "stable" ]] || [ "$MAKE_INSTALL" = "Y" ]; then
     fi
 
     rm -fRv pm_release
-fi
+#fi
 
 if [[ ! -f "version.json" ]]; then
     wget "https://github.com/PortsMaster/PortMaster-GUI/releases/latest/download/version.json"
