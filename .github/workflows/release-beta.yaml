@@ -88,9 +88,28 @@ jobs:
               echo "file: $file"
               md5sum "$file" | cut -f1 -d' ' > "$file.md5"
             done
-      - name: Download all workflow run artifacts
-        uses: actions/download-artifact@v5  
-#
+      - name: Upload Build Artifacts to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: PortMaster-Beta-Files
+          path: |
+               PortMaster.zip
+               PortMaster.zip.md5
+               version
+               version.json
+               Install*PortMaster.sh
+               muos.portmaster.zip
+               muos.portmaster.zip.md5
+               retrodeck.portmaster.zip
+               retrodeck.portmaster.zip.md5
+               trimui.portmaster.zip
+               trimui.portmaster.zip.md5
+               runtimes.aarch64.zip
+               runtimes.aarch64.zip.md5
+               runtimes.x86_64.zip 
+               runtimes.x86_64.zip.md5
+               runtimes_zips.json
+               
 #      - name: "Prepare Release"
 #        uses: ncipollo/release-action@v1
 #        with:
