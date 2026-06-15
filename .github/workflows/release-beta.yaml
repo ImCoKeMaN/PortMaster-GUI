@@ -48,17 +48,17 @@ jobs:
 
       - uses: edgarrc/action-7z@v1
 
-      - uses: robinraju/release-downloader@v1.8
-        with:
-          repository: ${{ github.repository }}
-          latest: true
-          fileName: "*.json"
+#      - uses: robinraju/release-downloader@v1.8
+#        with:
+#          repository: ${{ github.repository }}
+#          latest: true
+#          fileName: "*.json"
 
-      - uses: robinraju/release-downloader@v1.8
-        with:
-          repository: ${{ github.repository }}
-          latest: true
-          fileName: "Install*PortMaster.sh"
+#      - uses: robinraju/release-downloader@v1.8
+#        with:
+#          repository: ${{ github.repository }}
+#          latest: true
+#          fileName: "Install*PortMaster.sh"
 
       - name: Get release name for artifacts
         id: version
