@@ -318,6 +318,11 @@ case "$(echo "$DEVICE_NAME" | tr '[:upper:]' '[:lower:]')" in
         DEVICE_CPU="SM8550"
         ;;
 
+    "retroid pocket nova")
+        DEVICE_NAME="Retroid Pocket Nova"
+        DEVICE_CPU="SM8550"
+        ;;
+
     "retroid pocket"*)
         DEVICE_CPU="SD865"
         ;;
