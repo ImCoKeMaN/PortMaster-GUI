@@ -77,6 +77,7 @@ DEVICES = {
     "Retroid Pocket Mini":   {"device": "rpmini",  "manufacturer": "Retroid Pocket", "cfw": ["ROCKNIX", "Batocera"]},
     "Retroid Pocket Flip 2": {"device": "rpflip2", "manufacturer": "Retroid Pocket", "cfw": ["ROCKNIX", "Batocera"]},
     "Retroid Pocket 6":      {"device": "rp6",     "manufacturer": "Retroid Pocket", "cfw": ["ROCKNIX", "Batocera"]},
+    "Retroid Pocket Nova":   {"device": "rpnova",  "manufacturer": "Retroid Pocket", "cfw": ["ROCKNIX", "Batocera"]},
 
     # AYN Odin 2
     "AYN Odin 2 Pro/Mini/Portal": {"device": "odin-2", "manufacturer": "AYN", "cfw": ["ROCKNIX"]},
@@ -158,6 +159,7 @@ HW_INFO = {
     "rp5":     {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sd865", "capabilities": ["power", "ultra"], "ram": 8192},
     "rpflip2": {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sd865", "capabilities": ["power", "ultra"], "ram": 8192},
     "rp6":     {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sm8550", "capabilities": ["power", "ultra"], "ram": 8192},
+    "rpnova":  {"resolution": (1280,  960), "analogsticks": 2, "cpu": "sm8550", "capabilities": ["power", "ultra"], "ram": 8192},
 
     # AYN Odin 2 Pro/Mini/Portal
     "odin-2":  {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sm8550", "capabilities": ["power", "ultra"], "ram": 8192},
@@ -393,6 +395,7 @@ def nice_device_to_device(raw_device):
         ('retroid pocket mini',  'rpmini'),
         ('retroid pocket flip*', 'rpflip2'),
         ('retroid pocket 6',     'rp6'),
+        ('retroid pocket nova',  'rpnova'),
 
         ('mangmi air x*', 'mangmiairx')
         )
