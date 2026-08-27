@@ -16,8 +16,3 @@ $ESUDO chown $UID /run/user/$UID/pulse
 $ESUDO chmod 755 /run/user/$UID
 $ESUDO chmod 755 /run/user/$UID/pulse
 sleep 0.3
-
-pm_platform_helper() {
-    # DO SOMETHING HERE
-    printf ""
-}
