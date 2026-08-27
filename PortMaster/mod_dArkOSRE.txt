@@ -38,8 +38,3 @@ if [ ! -e /usr/lib/aarch64-linux-gnu/libGLdispatch.so ]; then
   sudo ln -sfv /usr/lib/aarch64-linux-gnu/libMali.so /usr/lib/aarch64-linux-gnu/libmali.so.1
   sudo ln -sfv /usr/lib/aarch64-linux-gnu/libGLdispatch.so.0.0.0 /usr/lib/aarch64-linux-gnu/libGLdispatch.so
 fi
-
-pm_platform_helper() {
-    # DO SOMETHING HERE
-    printf ""
-}
