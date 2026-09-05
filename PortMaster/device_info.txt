@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# PortMaster Device Information Provider (Dynamic Modernized v0.2.9)
+# PortMaster Device Information Provider (Dynamic Modernized v0.3.0)
 # ==============================================================================
 
 (return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
@@ -9,7 +9,7 @@ if [ "$SOURCED" -eq 1 ] && [ -n "$DEVICE_INFO_VERSION" ]; then
     return 0 2>/dev/null
 fi
 
-export DEVICE_INFO_VERSION="0.2.9"
+export DEVICE_INFO_VERSION="0.3.0"
 
 # ------------------------------------------------------------------------------
 # 0. DIRECTORY SETUP
@@ -73,8 +73,17 @@ esac
 export CFW_NAME="Unknown"
 export CFW_VERSION="Unknown"
 
-# 2a. ROCKNIX & JELOS
-if [ -f "/etc/rocknix-release" ] || [ -f "/storage/.config/rocknix" ] || grep -qi 'rocknix' /etc/os-release /usr/lib/os-release 2>/dev/null; then
+# 2a. RetroDECK Flatpak Container
+if [ -f "/app/bin/retrodeck" ] || [ -f "/app/bin/retrodeck.sh" ] || [ "$FLATPAK_ID" = "net.retrodeck.retrodeck" ]; then
+    export CFW_NAME="RetroDECK"
+    if [ -f "/var/config/retrodeck/retrodeck.json" ] && command -v jq >/dev/null 2>&1; then
+        export CFW_VERSION="$(jq -r .version /var/config/retrodeck/retrodeck.json 2>/dev/null)"
+    elif [ -f "/var/config/retrodeck/retrodeck.cfg" ]; then
+        export CFW_VERSION="$(grep -i 'version' /var/config/retrodeck/retrodeck.cfg 2>/dev/null | cut -d= -f2 | tr -d '"\r ')"
+    fi
+
+# 2b. ROCKNIX & JELOS
+elif [ -f "/etc/rocknix-release" ] || [ -f "/storage/.config/rocknix" ] || grep -qi 'rocknix' /etc/os-release /usr/lib/os-release 2>/dev/null; then
     export CFW_NAME="ROCKNIX"
     if [ -f "/etc/rocknix-release" ]; then
         export CFW_VERSION="$(tr -d '\r\n' < /etc/rocknix-release 2>/dev/null)"
@@ -113,7 +122,7 @@ elif [ -f "/etc/jelos-release" ] || [ -f "/storage/.config/jelos" ] || grep -qi 
         fi
     fi
 
-# 2b. muOS (MustardOS)
+# 2c. muOS (MustardOS)
 elif [ -f "/opt/muos/config/system/version" ] || [ -f "/opt/muos/config/version.txt" ] || [ -d "/opt/muos" ] || grep -qiE '^(ID=muos|NAME=MustardOS)' /etc/os-release 2>/dev/null; then
     export CFW_NAME="muOS"
     if [ -f "/opt/muos/config/system/version" ]; then
@@ -125,7 +134,7 @@ elif [ -f "/opt/muos/config/system/version" ] || [ -f "/opt/muos/config/version.
         [ -f "/etc/os-release" ] && export CFW_VERSION="$(grep -iE '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"\r ')"
     fi
 
-# 2c. Plymouth Theme Matching (dArkOS, ArkOS, TheRA)
+# 2d. Plymouth Theme (dArkOS, ArkOS, TheRA)
 elif [ -f "/usr/share/plymouth/themes/text.plymouth" ] && grep -qiE '(darkos|arkos|thera)' /usr/share/plymouth/themes/text.plymouth 2>/dev/null; then
     PLY_TITLE="$(grep -i "title=" /usr/share/plymouth/themes/text.plymouth 2>/dev/null)"
     if echo "$PLY_TITLE" | grep -qi "darkos"; then
@@ -138,7 +147,7 @@ elif [ -f "/usr/share/plymouth/themes/text.plymouth" ] && grep -qiE '(darkos|ark
     PLY_VER="$(echo "$PLY_TITLE" | grep -oE '[0-9]{6,8}' | head -n1)"
     [ -n "$PLY_VER" ] && export CFW_VERSION="$PLY_VER"
 
-# 2d. Knulli
+# 2e. Knulli
 elif [ -f "/boot/boot/knulli.board" ] || [ -f "/boot/knulli.board" ] || [ -f "/etc/knulli.version" ] || grep -qi 'OS_NAME="*knulli"*' /etc/os-release 2>/dev/null; then
     export CFW_NAME="knulli"
     for kver in /etc/knulli.version /boot/knulli.version /userdata/system/knulli.version /etc/knulli_version; do
@@ -155,22 +164,22 @@ elif [ -f "/boot/boot/knulli.board" ] || [ -f "/boot/knulli.board" ] || [ -f "/e
     fi
     [ "$CFW_VERSION" = "Unknown" ] || [ -z "$CFW_VERSION" ] && export CFW_VERSION="scarab"
 
-# 2e. RetroOZ
+# 2f. RetroOZ
 elif [ -f "/etc/retrooz_version" ]; then
     export CFW_NAME="RetroOZ"
     export CFW_VERSION="$(tr -d '\r\n' < /etc/retrooz_version 2>/dev/null)"
 
-# 2f. AmberELEC
+# 2g. AmberELEC
 elif [ -f "/etc/amber_version" ] || [ -f "/etc/amberelec_version" ]; then
     export CFW_NAME="AmberELEC"
     export CFW_VERSION="$(cat /etc/amber*_version 2>/dev/null | head -n1 | tr -d '\r\n')"
 
-# 2g. Batocera
+# 2h. Batocera
 elif [ -f "/usr/share/batocera/batocera.version" ]; then
     export CFW_NAME="Batocera.linux"
     export CFW_VERSION="$(tr -d '\r\n' < /usr/share/batocera/batocera.version 2>/dev/null)"
 
-# 2h. Specific ArkOS/dArkOS Version File Fallbacks
+# 2i. Specific ArkOS/dArkOS Version File Fallbacks
 elif [ -f "/etc/darkos_version" ] || [ -f "/etc/arkos_version" ]; then
     if [ -f "/etc/darkos_version" ]; then
         export CFW_NAME="dArkOS"
@@ -181,11 +190,9 @@ elif [ -f "/etc/darkos_version" ] || [ -f "/etc/arkos_version" ]; then
     fi
 fi
 
-# 2i. Generic /etc/os-release Fallback
+# 2j. Generic /etc/os-release Fallback (SteamOS, Debian, Ubuntu, Fedora, Arch)
 if [ "$CFW_NAME" = "Unknown" ] && { [ -f "/etc/os-release" ] || [ -f "/usr/lib/os-release" ]; }; then
-    OS_FILE="/etc/os-release"
-    [ ! -f "$OS_FILE" ] && OS_FILE="/usr/lib/os-release"
-    
+    OS_FILE="/etc/os-release"; [ ! -f "$OS_FILE" ] && OS_FILE="/usr/lib/os-release"
     CFW_NAME="$(grep -E '^(NAME|ID)=' "$OS_FILE" | head -n1 | cut -d= -f2 | tr -d '"\r')"
     for key in VERSION_ID VERSION VERSION_CODENAME BUILD_ID; do
         val="$(grep -iE "^${key}=" "$OS_FILE" 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '"\r ')"
@@ -196,7 +203,7 @@ if [ "$CFW_NAME" = "Unknown" ] && { [ -f "/etc/os-release" ] || [ -f "/usr/lib/o
     done
 fi
 
-# 2j. GLIBC Detection (getconf -> ldd -> direct binary inspect)
+# 2k. GLIBC Detection
 export CFW_GLIBC="Unknown"
 if command -v getconf >/dev/null 2>&1; then
     G_VER="$(getconf GNU_LIBC_VERSION 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -n1)"
@@ -210,8 +217,7 @@ fi
 
 if [ "$CFW_GLIBC" = "Unknown" ]; then
     for path in \
-        /lib/libc.so.6 /lib/ld-linux*.so.* /lib64/libc.so.6 \
-        /usr/lib/libc.so.6 /usr/lib64/libc.so.6 \
+        /lib/libc.so.6 /lib64/libc.so.6 /usr/lib/libc.so.6 /usr/lib64/libc.so.6 \
         /lib/aarch64-linux-gnu/libc.so.6 /usr/lib/aarch64-linux-gnu/libc.so.6 \
         /lib/arm-linux-gnueabihf/libc.so.6 /usr/lib/arm-linux-gnueabihf/libc.so.6 \
         /lib/x86_64-linux-gnu/libc.so.6 /usr/lib/x86_64-linux-gnu/libc.so.6; do
@@ -259,14 +265,23 @@ for dfile in \
     fi
 done
 
-# 3b. Device Tree & DMI Fallback (Always null-safe)
+# 3b. DMI (x86 PCs & Handhelds) & Device Tree Fallback
 if [ "$DEVICE_NAME" = "Unknown" ]; then
-    if [ -f "/proc/device-tree/model" ]; then
+    if [ -f "/sys/devices/virtual/dmi/id/product_name" ]; then
+        DMI_NAME="$(tr -d '\r\n' < /sys/devices/virtual/dmi/id/product_name 2>/dev/null)"
+        case "$DMI_NAME" in
+            "Galileo") export DEVICE_NAME="Steam Deck OLED" ;;
+            "Jupiter") export DEVICE_NAME="Steam Deck" ;;
+            "ROG Ally"*|"RC71L"*) export DEVICE_NAME="ROG Ally" ;;
+            "83E1"*)   export DEVICE_NAME="Legion Go" ;;
+            "G1618-04"*) export DEVICE_NAME="GPD Win 4" ;;
+            "G1617-01"*) export DEVICE_NAME="GPD Win Mini" ;;
+            *) [ -n "$DMI_NAME" ] && export DEVICE_NAME="$DMI_NAME" ;;
+        esac
+    elif [ -f "/proc/device-tree/model" ]; then
         export DEVICE_NAME="$(tr -d '\0\r\n' < /proc/device-tree/model 2>/dev/null)"
     elif [ -f "/sys/firmware/devicetree/base/model" ]; then
         export DEVICE_NAME="$(tr -d '\0\r\n' < /sys/firmware/devicetree/base/model 2>/dev/null)"
-    elif [ -f "/sys/devices/virtual/dmi/id/product_name" ]; then
-        export DEVICE_NAME="$(tr -d '\r\n' < /sys/devices/virtual/dmi/id/product_name 2>/dev/null)"
     fi
 fi
 
@@ -281,25 +296,25 @@ if [ -f "/sys/devices/soc0/machine" ]; then
     esac
 fi
 
-if [ "$DEVICE_CPU" = "Unknown" ]; then
-    if grep -qiE '(sun50iw9|allwinner.*h700)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null || [[ "$DEVICE_NAME" =~ ^(RG35XX|RG28XX|RG40XX|RGCUBEXX|RG34XX) ]]; then
+if [ "$DEVICE_CPU" = "Unknown" ] && [ -f "/proc/device-tree/compatible" ]; then
+    if grep -qiE '(sun50iw9|allwinner.*h700)' /proc/device-tree/compatible 2>/dev/null || [[ "$DEVICE_NAME" =~ ^(RG35XX|RG28XX|RG40XX|RGCUBEXX|RG34XX) ]]; then
         export DEVICE_CPU="h700"
-    elif grep -qiE '(sm8550|qcom,sm8550)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(sm8550|qcom,sm8550)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="SM8550"
-    elif grep -qiE '(sm8450|qcom,sm8450)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(sm8450|qcom,sm8450)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="SM8450"
-    elif grep -qiE '(sm8250|qcom,sm8250)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(sm8250|qcom,sm8250)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="SM8250"
-    elif grep -qiE '(rk3588|rockchip,rk3588)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(rk3588|rockchip,rk3588)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="rk3588"
-    elif grep -qiE '(rk3566|rockchip,rk3566)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(rk3566|rockchip,rk3566)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="rk3566"
-    elif grep -qiE '(rk3326|rockchip,rk3326)' /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null; then
+    elif grep -qiE '(rk3326|rockchip,rk3326)' /proc/device-tree/compatible 2>/dev/null; then
         export DEVICE_CPU="rk3326"
     fi
 fi
 
-# Fallback: ARM MIDR Part Codes Decoder
+# Fallback: ARM MIDR Decoder or /proc/cpuinfo model name
 if [ "$DEVICE_CPU" = "Unknown" ] && [ -f "/proc/cpuinfo" ]; then
     PART_CODE="$(grep -i "CPU part" /proc/cpuinfo 2>/dev/null | head -n1 | cut -d: -f2 | tr -d ' \t\r\n' | tr '[:upper:]' '[:lower:]')"
     case "$PART_CODE" in
@@ -345,16 +360,18 @@ export DISPLAY_ORIENTATION=0
 
 RES_RESOLVED=0
 
-# DRM Modes first
+# DRM Modes (check connected monitors first for performance)
 if [ -d "/sys/class/drm" ]; then
-    for mode_file in /sys/class/drm/card*-*/modes; do
-        if [ -f "$mode_file" ]; then
-            FIRST_MODE="$(head -n1 "$mode_file" 2>/dev/null)"
-            if echo "$FIRST_MODE" | grep -qE '^[0-9]+x[0-9]+'; then
-                export DISPLAY_WIDTH="$(echo "$FIRST_MODE" | sed -E 's/^([0-9]+)x([0-9]+).*/\1/')"
-                export DISPLAY_HEIGHT="$(echo "$FIRST_MODE" | sed -E 's/^([0-9]+)x([0-9]+).*/\2/')"
-                RES_RESOLVED=1
-                break
+    for card_dir in /sys/class/drm/card*-*; do
+        if [ -f "$card_dir/status" ] && grep -q "^connected" "$card_dir/status" 2>/dev/null; then
+            if [ -f "$card_dir/modes" ]; then
+                FIRST_MODE="$(head -n1 "$card_dir/modes" 2>/dev/null)"
+                if echo "$FIRST_MODE" | grep -qE '^[0-9]+x[0-9]+'; then
+                    export DISPLAY_WIDTH="$(echo "$FIRST_MODE" | sed -E 's/^([0-9]+)x([0-9]+).*/\1/')"
+                    export DISPLAY_HEIGHT="$(echo "$FIRST_MODE" | sed -E 's/^([0-9]+)x([0-9]+).*/\2/')"
+                    RES_RESOLVED=1
+                    break
+                fi
             fi
         fi
     done
@@ -393,6 +410,14 @@ fi
 # Clean integer values
 DISPLAY_WIDTH="$(echo "$DISPLAY_WIDTH" | grep -oE '^[0-9]+' || echo "640")"
 DISPLAY_HEIGHT="$(echo "$DISPLAY_HEIGHT" | grep -oE '^[0-9]+' || echo "480")"
+
+# Normalize native portrait handheld panels (e.g. Steam Deck 800x1280 -> 1280x800)
+
+    if [ "$DISPLAY_WIDTH" -lt "$DISPLAY_HEIGHT" ]; then
+        TMP_W="$DISPLAY_WIDTH"
+        export DISPLAY_WIDTH="$DISPLAY_HEIGHT"
+        export DISPLAY_HEIGHT="$TMP_W"
+    fi
 
 # Orientation check
 if [ -f "/sys/class/graphics/fb0/rotate" ]; then
