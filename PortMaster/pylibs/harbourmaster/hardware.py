@@ -198,13 +198,17 @@ class HardwareDetector:
         if (
             os.path.exists("/etc/rocknix-release")
             or os.path.exists("/storage/.config/rocknix")
-            or "rocknix"
-            in _read_file("/etc/os-release", False)
-            + _read_file("/usr/lib/os-release", False)
+            or "rocknix" in _read_file("/etc/os-release", False) + _read_file("/usr/lib/os-release", False)
         ):
             self.info["cfw_name"] = "ROCKNIX"
             if os.path.exists("/etc/rocknix-release"):
                 self.info["cfw_version"] = _read_file("/etc/rocknix-release")
+            else:
+                for os_file in ["/etc/os-release", "/usr/lib/os-release"]:
+                    m = re.search(r'^(?:OS_VERSION|VERSION_ID|VERSION)="?([^"\r\n]+)', _read_file(os_file, False), re.M)
+                    if m:
+                        self.info["cfw_version"] = m.group(1)
+                        break
             return
 
         if (
@@ -514,15 +518,12 @@ class HardwareDetector:
                 self.info["display_width"] = int(m.group(1))
                 self.info["display_height"] = int(m.group(2))
 
-        dev_name = self.info["device_name"]
-        if any(
-            x in dev_name for x in ["Steam Deck", "ROG Ally", "Legion Go", "GPD"]
-        ):
-            if self.info["display_width"] < self.info["display_height"]:
-                self.info["display_width"], self.info["display_height"] = (
-                    self.info["display_height"],
-                    self.info["display_width"],
-                )
+
+        if self.info["display_width"] < self.info["display_height"]:
+            self.info["display_width"], self.info["display_height"] = (
+                self.info["display_height"],
+                self.info["display_width"],
+            )
 
         w, h = self.info["display_width"], self.info["display_height"]
         gcd = _calc_gcd(w, h)
