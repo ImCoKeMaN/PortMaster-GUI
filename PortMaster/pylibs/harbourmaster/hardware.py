@@ -395,7 +395,7 @@ class HardwareDetector:
             self.info["device_ram"] = (kb + 1048575) // 1048576
 
     def _detect_cpu(self) -> str:
-        # A. Linux generic SoC bus (Snapdragon, Exynos, etc.)
+        # A. Linux generic SoC bus
         for soc_dir in ["/sys/devices/soc0", "/sys/bus/soc/devices/soc0"]:
             mach_path = os.path.join(soc_dir, "machine")
             if os.path.exists(mach_path):
@@ -403,7 +403,7 @@ class HardwareDetector:
                 if mach:
                     return mach
 
-        # B. Positional Devicetree SoC extraction (Line 2 is the exact silicon model)
+        # B. Positional Devicetree SoC extraction
         for dt_path in ["/proc/device-tree/compatible", "/sys/firmware/devicetree/base/compatible"]:
             if os.path.exists(dt_path):
                 try:
@@ -414,12 +414,23 @@ class HardwareDetector:
                         soc_entry = entries[1] if len(entries) > 1 else entries[0]
                         clean = soc_entry.split(",", 1)[-1]
                         clean = re.sub(r"^sun\d+i-", "", clean)
+                        
+                        # Normalize Allwinner BSP codes
+                        if "sun50iw9" in clean:
+                            return "h700"
+                        elif "sun50iw10" in clean:
+                            return "a133plus"
+                        elif "sun50iw12" in clean:
+                            return "a527"
+                        elif "sun50iw6" in clean:
+                            return "h6"
+                            
                         if clean:
                             return clean
                 except Exception:
                     pass
 
-        # C. /proc/cpuinfo Hardware or model name fallback (x86 & legacy ARM)
+        # C. /proc/cpuinfo Hardware or model name fallback
         if os.path.exists("/proc/cpuinfo"):
             try:
                 with open("/proc/cpuinfo", "r", errors="ignore") as f:
@@ -471,7 +482,6 @@ class HardwareDetector:
         max_sticks = 0
         has_triggers = "N"
 
-        # 1. Dynamic Hardware Probe via sysfs
         for abs_file in glob.glob("/sys/class/input/input*/capabilities/abs"):
             try:
                 parent = os.path.dirname(abs_file)
@@ -480,7 +490,6 @@ class HardwareDetector:
                 if os.path.exists(name_file):
                     dev_name = _read_file(name_file).lower()
 
-                # Skip non-gamepad sensors
                 if any(k in dev_name for k in ["touch", "stylus", "accel", "gyro", "sensor", "lid", "power", "sleep"]):
                     continue
 
@@ -492,23 +501,22 @@ class HardwareDetector:
                 lowest_word = int(tokens[-1], 16)
                 current_sticks = 0
 
-                # Left stick: ABS_X (bit 0) & ABS_Y (bit 1) -> 0x3
+                # Stick 1: ABS_X (0) & ABS_Y (1) -> 0x3
                 if (lowest_word & 0x3) == 0x3:
                     current_sticks = 1
-                    # Right stick: ABS_RX (bit 3) & ABS_RY (bit 4) -> 0x18
-                    if (lowest_word & 0x18) == 0x18:
+                    # Stick 2: ABS_RX (3) & ABS_RY (4) -> 0x18 OR ABS_Z (2) & ABS_RZ (5) -> 0x24
+                    if (lowest_word & 0x18) == 0x18 or (lowest_word & 0x24) == 0x24:
                         current_sticks = 2
 
                 if current_sticks > max_sticks:
                     max_sticks = current_sticks
 
-                # Triggers: ABS_Z (0x4) + ABS_RZ (0x20) -> 0x24 (36) OR ABS_GAS (0x200) + ABS_BRAKE (0x400) -> 0x600 (1536)
-                if (lowest_word & 0x24) == 0x24 or (lowest_word & 0x600) == 0x600:
+                # Triggers: ABS_GAS + ABS_BRAKE (0x600) OR full 6-axis X+Y+RX+RY+Z+RZ (0x3f)
+                if (lowest_word & 0x600) == 0x600 or (lowest_word & 0x3f) == 0x3f:
                     has_triggers = "Y"
             except Exception:
                 pass
 
-        # 2. Case-insensitive fallback for GPIO-key-only devices
         if max_sticks == 0:
             u_name = self.info.get("device_name", "").upper()
             if any(k in u_name for k in ["RG35XX-PLUS", "RG35XX-SP", "RG28XX", "RG35XX-2024", "RG34XX", "MIYOO MINI", "TRIMUI-BRICK"]):
