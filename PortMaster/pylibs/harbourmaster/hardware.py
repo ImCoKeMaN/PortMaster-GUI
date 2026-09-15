@@ -105,7 +105,7 @@ class HardwareDetector:
             return self.info
 
         self.info = {
-            "device_info_version": "0.3.0",
+            "device_info_version": "0.2.0",
             "pm_version": self._detect_pm_version(),
             "cfw_name": "Unknown",
             "cfw_version": "Unknown",
@@ -124,6 +124,7 @@ class HardwareDetector:
             "aspect_x": 4,
             "aspect_y": 3,
             "analog_sticks": 2,
+            "analog_triggers": "N",
         }
 
         self._detect_architecture()
@@ -214,9 +215,7 @@ class HardwareDetector:
         if (
             os.path.exists("/etc/jelos-release")
             or os.path.exists("/storage/.config/jelos")
-            or "jelos"
-            in _read_file("/etc/os-release", False)
-            + _read_file("/usr/lib/os-release", False)
+            or "jelos" in _read_file("/etc/os-release", False) + _read_file("/usr/lib/os-release", False)
         ):
             self.info["cfw_name"] = "JELOS"
             if os.path.exists("/etc/jelos-release"):
@@ -230,9 +229,7 @@ class HardwareDetector:
             or os.path.isdir("/opt/muos")
         ):
             self.info["cfw_name"] = "muOS"
-            v = _read_file("/opt/muos/config/system/version") or _read_file(
-                "/opt/muos/config/version.txt"
-            )
+            v = _read_file("/opt/muos/config/system/version") or _read_file("/opt/muos/config/version.txt")
             if v:
                 self.info["cfw_version"] = v
             return
@@ -240,15 +237,11 @@ class HardwareDetector:
         # 4. Spruce
         if os.path.exists("/mnt/SDCARD/spruce"):
             self.info["cfw_name"] = "spruce"
-            self.info["cfw_version"] = _read_file(
-                "/mnt/SDCARD/spruce/spruce"
-            )
+            self.info["cfw_version"] = _read_file("/mnt/SDCARD/spruce/spruce")
             return
 
         # 5. Plymouth theme (ArkOS, dArkOS, TheRA)
-        plymouth_text = _read_file(
-            "/usr/share/plymouth/themes/text.plymouth", False
-        )
+        plymouth_text = _read_file("/usr/share/plymouth/themes/text.plymouth", False)
         if plymouth_text:
             match = re.search(r"title=(.*)", plymouth_text, re.I)
             if match:
@@ -282,15 +275,8 @@ class HardwareDetector:
                 if os.path.exists(kpath):
                     self.info["cfw_version"] = _read_file(kpath)
                     break
-            if (
-                self.info["cfw_version"] == "Unknown"
-                and os.path.exists("/etc/os-release")
-            ):
-                m_kver = re.search(
-                    r'^OS_VERSION="?([^"\r\n]+)',
-                    _read_file("/etc/os-release", False),
-                    re.MULTILINE,
-                )
+            if self.info["cfw_version"] == "Unknown" and os.path.exists("/etc/os-release"):
+                m_kver = re.search(r'^OS_VERSION="?([^"\r\n]+)', _read_file("/etc/os-release", False), re.MULTILINE)
                 if m_kver:
                     self.info["cfw_version"] = m_kver.group(1)
             if self.info["cfw_version"] == "Unknown":
@@ -300,21 +286,15 @@ class HardwareDetector:
         # 7. Batocera / AmberELEC / RetroOZ
         if os.path.exists("/usr/share/batocera/batocera.version"):
             self.info["cfw_name"] = "Batocera.linux"
-            self.info["cfw_version"] = _read_file(
-                "/usr/share/batocera/batocera.version"
-            )
+            self.info["cfw_version"] = _read_file("/usr/share/batocera/batocera.version")
             return
 
         # 8. Generic /etc/os-release Fallback
         for os_file in ["/etc/os-release", "/usr/lib/os-release"]:
             if os.path.exists(os_file):
                 data = _read_file(os_file, False)
-                m_name = re.search(
-                    r'^(?:NAME|ID)="?([^"\r\n]+)', data, re.MULTILINE
-                )
-                m_ver = re.search(
-                    r'^(?:VERSION_ID|VERSION)="?([^"\r\n]+)', data, re.MULTILINE
-                )
+                m_name = re.search(r'^(?:NAME|ID)="?([^"\r\n]+)', data, re.MULTILINE)
+                m_ver = re.search(r'^(?:VERSION_ID|VERSION)="?([^"\r\n]+)', data, re.MULTILINE)
                 if m_name:
                     self.info["cfw_name"] = m_name.group(1)
                 if m_ver:
@@ -334,9 +314,7 @@ class HardwareDetector:
         ]:
             if os.path.exists(libc_path):
                 try:
-                    res = subprocess.run(
-                        [libc_path], capture_output=True, text=True, timeout=1
-                    )
+                    res = subprocess.run([libc_path], capture_output=True, text=True, timeout=1)
                     m = re.search(r"version (\d+\.\d+)", res.stdout)
                     if m:
                         self.info["cfw_glibc"] = _normalize_glibc(m.group(1))
@@ -352,12 +330,7 @@ class HardwareDetector:
 
         # 2. getconf fallback
         try:
-            res = subprocess.run(
-                ["getconf", "GNU_LIBC_VERSION"],
-                capture_output=True,
-                text=True,
-                timeout=1,
-            )
+            res = subprocess.run(["getconf", "GNU_LIBC_VERSION"], capture_output=True, text=True, timeout=1)
             m = re.search(r"(\d+\.\d+)", res.stdout)
             if m:
                 self.info["cfw_glibc"] = _normalize_glibc(m.group(1))
@@ -392,10 +365,7 @@ class HardwareDetector:
                     break
 
         # DMI Fallback for x86 Handhelds
-        if (
-            self.info["device_name"] == "Unknown"
-            and os.path.exists("/sys/devices/virtual/dmi/id/product_name")
-        ):
+        if self.info["device_name"] == "Unknown" and os.path.exists("/sys/devices/virtual/dmi/id/product_name"):
             dmi = _read_file("/sys/devices/virtual/dmi/id/product_name")
             dmi_map = {
                 "Galileo": "Steam Deck OLED",
@@ -409,91 +379,13 @@ class HardwareDetector:
 
         # Device Tree Model Fallback
         if self.info["device_name"] == "Unknown":
-            for dt_path in [
-                "/proc/device-tree/model",
-                "/sys/firmware/devicetree/base/model",
-            ]:
+            for dt_path in ["/proc/device-tree/model", "/sys/firmware/devicetree/base/model"]:
                 if os.path.exists(dt_path):
                     self.info["device_name"] = _read_file(dt_path)
                     break
 
-        # 2. CPU / SoC Resolution
-        compatible = (
-            _read_file("/proc/device-tree/compatible", False)
-            + _read_file("/sys/firmware/devicetree/base/compatible", False)
-        ).lower()
-        dev_name = self.info["device_name"].lower()
-        cpuinfo = _read_file("/proc/cpuinfo", False)
-        cpuinfo_lower = cpuinfo.lower()
-
-        # Check DT / Compatible / Device Name first
-        if (
-            "a133" in compatible
-            or "sun50iw10" in compatible
-            or "trimui-smart-pro" in dev_name
-            or "trimui-brick" in dev_name
-        ):
-            self.info["device_cpu"] = "a133plus"
-        elif (
-            "sun50iw9" in compatible
-            or "h700" in compatible
-            or re.match(r"^(rg35xx|rg28xx|rg40xx|rgcubexx|rg34xx)", dev_name)
-        ):
-            self.info["device_cpu"] = "h700"
-        elif "rk3588" in compatible or "rk3588" in cpuinfo_lower:
-            self.info["device_cpu"] = "rk3588"
-        elif (
-            "rk3566" in compatible
-            or "rk3568" in compatible
-            or "rk3566" in cpuinfo_lower
-        ):
-            self.info["device_cpu"] = "rk3566"
-        elif (
-            "rk3326" in compatible
-            or "px30" in compatible
-            or "rk3326" in cpuinfo_lower
-            or any(
-                x in dev_name
-                for x in [
-                    "g350",
-                    "rg351",
-                    "rgb10",
-                    "rgb20",
-                    "rk2020",
-                    "rk2023",
-                    "r33s",
-                    "r35s",
-                    "r36s",
-                    "xu10",
-                ]
-            )
-        ):
-            self.info["device_cpu"] = "rk3326"
-        elif "sm8550" in compatible or "sm8550" in cpuinfo_lower:
-            self.info["device_cpu"] = "SM8550"
-        elif "sm8450" in compatible or "sm8450" in cpuinfo_lower:
-            self.info["device_cpu"] = "SM8450"
-        elif "sm8250" in compatible or "sm8250" in cpuinfo_lower:
-            self.info["device_cpu"] = "SM8250"
-
-        # MIDR Part Code Fallback for BSP kernels
-        if self.info["device_cpu"] == "Unknown":
-          cpuinfo = _read_file("/proc/cpuinfo", False)
-          m_part = re.search(r"CPU part\s*:\s*0x([0-9a-fA-F]+)", cpuinfo)
-          if m_part:
-            part_code = "0x" + m_part.group(1).lower()
-            if part_code == "0xd04":  # Cortex-A35 -> RK3326
-              self.info["device_cpu"] = "rk3326"
-            elif part_code == "0xd05":  # Cortex-A55 -> RK3566 or H700
-              if "allwinner" in cpuinfo.lower() or "sun50i" in cpuinfo.lower():
-                self.info["device_cpu"] = "h700"
-              else:
-                self.info["device_cpu"] = "rk3566"
-            elif part_code == "0xd03":  # Cortex-A53 -> A133+
-              self.info["device_cpu"] = "a133plus"
-
-        if self.info["device_cpu"] == "Unknown":
-            self.info["device_cpu"] = self.info["device_arch"]
+        # 2. Dynamic CPU / SoC Resolution (Zero hardcoded lists)
+        self.info["device_cpu"] = self._detect_cpu()
 
         # 3. RAM (Ceiled to physical GB capacity)
         meminfo = _read_file("/proc/meminfo", False)
@@ -502,13 +394,49 @@ class HardwareDetector:
             kb = int(mem_match.group(1))
             self.info["device_ram"] = (kb + 1048575) // 1048576
 
+    def _detect_cpu(self) -> str:
+        # A. Linux generic SoC bus (Snapdragon, Exynos, etc.)
+        for soc_dir in ["/sys/devices/soc0", "/sys/bus/soc/devices/soc0"]:
+            mach_path = os.path.join(soc_dir, "machine")
+            if os.path.exists(mach_path):
+                mach = _read_file(mach_path)
+                if mach:
+                    return mach
+
+        # B. Positional Devicetree SoC extraction (Line 2 is the exact silicon model)
+        for dt_path in ["/proc/device-tree/compatible", "/sys/firmware/devicetree/base/compatible"]:
+            if os.path.exists(dt_path):
+                try:
+                    with open(dt_path, "rb") as f:
+                        raw = f.read()
+                    entries = [e.decode("utf-8", errors="ignore") for e in raw.split(b"\0") if e]
+                    if entries:
+                        soc_entry = entries[1] if len(entries) > 1 else entries[0]
+                        clean = soc_entry.split(",", 1)[-1]
+                        clean = re.sub(r"^sun\d+i-", "", clean)
+                        if clean:
+                            return clean
+                except Exception:
+                    pass
+
+        # C. /proc/cpuinfo Hardware or model name fallback (x86 & legacy ARM)
+        if os.path.exists("/proc/cpuinfo"):
+            try:
+                with open("/proc/cpuinfo", "r", errors="ignore") as f:
+                    for line in f:
+                        if re.match(r"^(model name|Hardware)\s*:", line, re.I):
+                            val = line.split(":", 1)[1].strip()
+                            if val and val.lower() not in ("unknown", "dummy"):
+                                return val
+            except Exception:
+                pass
+
+        return self.info.get("device_arch", "Unknown")
+
     def _detect_display(self):
         for mode_file in glob.glob("/sys/class/drm/card*-*/modes"):
             status_file = Path(mode_file).parent / "status"
-            if (
-                os.path.exists(status_file)
-                and "connected" in _read_file(status_file)
-            ):
+            if os.path.exists(status_file) and "connected" in _read_file(status_file):
                 first_mode = _read_file(mode_file)
                 m = re.match(r"^(\d+)x(\d+)", first_mode)
                 if m:
@@ -516,17 +444,14 @@ class HardwareDetector:
                     self.info["display_height"] = int(m.group(2))
                     break
 
-        if (
-            self.info["display_width"] == 640
-            and self.info["display_height"] == 480
-        ):
+        if self.info["display_width"] == 640 and self.info["display_height"] == 480:
             fb_modes = _read_file("/sys/class/graphics/fb0/modes")
             m = re.search(r"(\d+)x(\d+)", fb_modes)
             if m:
                 self.info["display_width"] = int(m.group(1))
                 self.info["display_height"] = int(m.group(2))
 
-
+        # Rotate portrait panels
         if self.info["display_width"] < self.info["display_height"]:
             self.info["display_width"], self.info["display_height"] = (
                 self.info["display_height"],
@@ -541,27 +466,60 @@ class HardwareDetector:
                 ax, ay = 16, 10
             self.info["aspect_x"] = ax
             self.info["aspect_y"] = ay
-    
 
     def _detect_controls(self):
-        name = self.info["device_name"].upper()
-        if any(
-            k in name
-            for k in [
-                "RG35XX-PLUS",
-                "RG35XX-SP",
-                "RG28XX",
-                "RG35XX-2024",
-                "RG34XX",
-                "MIYOO MINI",
-                "TRIMUI-BRICK",
-            ]
-        ):
-            self.info["analog_sticks"] = 0
-        elif any(k in name for k in ["RG351V", "RGB20S", "RG40XX-V"]):
-            self.info["analog_sticks"] = 1
-        else:
-            self.info["analog_sticks"] = 2
+        max_sticks = 0
+        has_triggers = "N"
+
+        # 1. Dynamic Hardware Probe via sysfs
+        for abs_file in glob.glob("/sys/class/input/input*/capabilities/abs"):
+            try:
+                parent = os.path.dirname(abs_file)
+                name_file = os.path.join(parent, "name")
+                dev_name = ""
+                if os.path.exists(name_file):
+                    dev_name = _read_file(name_file).lower()
+
+                # Skip non-gamepad sensors
+                if any(k in dev_name for k in ["touch", "stylus", "accel", "gyro", "sensor", "lid", "power", "sleep"]):
+                    continue
+
+                raw_abs = _read_file(abs_file)
+                tokens = raw_abs.replace(",", " ").split()
+                if not tokens:
+                    continue
+
+                lowest_word = int(tokens[-1], 16)
+                current_sticks = 0
+
+                # Left stick: ABS_X (bit 0) & ABS_Y (bit 1) -> 0x3
+                if (lowest_word & 0x3) == 0x3:
+                    current_sticks = 1
+                    # Right stick: ABS_RX (bit 3) & ABS_RY (bit 4) -> 0x18
+                    if (lowest_word & 0x18) == 0x18:
+                        current_sticks = 2
+
+                if current_sticks > max_sticks:
+                    max_sticks = current_sticks
+
+                # Triggers: ABS_Z (0x4) + ABS_RZ (0x20) -> 0x24 (36) OR ABS_GAS (0x200) + ABS_BRAKE (0x400) -> 0x600 (1536)
+                if (lowest_word & 0x24) == 0x24 or (lowest_word & 0x600) == 0x600:
+                    has_triggers = "Y"
+            except Exception:
+                pass
+
+        # 2. Case-insensitive fallback for GPIO-key-only devices
+        if max_sticks == 0:
+            u_name = self.info.get("device_name", "").upper()
+            if any(k in u_name for k in ["RG35XX-PLUS", "RG35XX-SP", "RG28XX", "RG35XX-2024", "RG34XX", "MIYOO MINI", "TRIMUI-BRICK"]):
+                max_sticks = 0
+            elif any(k in u_name for k in ["RG351V", "RGB20S", "RG40XX-V"]):
+                max_sticks = 1
+            else:
+                max_sticks = 2
+
+        self.info["analog_sticks"] = max_sticks
+        self.info["analog_triggers"] = has_triggers
 
     # --------------------------------------------------------------------------
     # Output Schema Exporters
@@ -572,10 +530,30 @@ class HardwareDetector:
         w, h = info["display_width"], info["display_height"]
         ax, ay = info["aspect_x"], info["aspect_y"]
         ram_mb = info["device_ram"] * 1024
+        cfw = info["cfw_name"].lower()
+        cpu = str(info["device_cpu"]).lower()
 
-        capabilities: List[str] = ["opengl", "power"]
+        capabilities: List[str] = []
 
-        # Multi-lib tags (in Harbourmaster order: armhf, aarch64)
+        # 1. opengl (muOS and AmberELEC lack desktop OpenGL; check system libGL or full-GL distros)
+        gl_markers = [
+            "/usr/lib/libGL.so",
+            "/usr/lib/libGL.so.1",
+            "/usr/lib/aarch64-linux-gnu/libGL.so.1",
+            "/usr/lib/arm-linux-gnueabihf/libGL.so.1",
+            "/usr/lib/x86_64-linux-gnu/libGL.so.1",
+            "/lib/libGL.so.1",
+        ]
+        has_libgl = any(os.path.exists(p) for p in gl_markers)
+        gl_supported_cfws = ("knulli", "batocera.linux", "retrodeck", "arkos", "darkos", "thera", "steamos", "rocknix")
+        if (has_libgl or cfw in gl_supported_cfws) and cfw not in ("muos", "amberelec"):
+            capabilities.append("opengl")
+
+        # 2. power (Enabled on all devices EXCEPT rk3326 and px30)
+        if cpu not in ("rk3326", "px30"):
+            capabilities.append("power")
+
+        # 3. Multi-lib tags (in Harbourmaster order)
         if info["device_has_armhf"] == "Y":
             capabilities.append("armhf")
         if info["device_has_aarch64"] == "Y":
@@ -585,25 +563,30 @@ class HardwareDetector:
         if info["device_has_x86_64"] == "Y":
             capabilities.append("x86_64")
 
-        # CFW specific features
-        if info["cfw_name"].lower() in ("arkos", "darkos", "muos", "thera", "rocknix", "jelos", "steamos", "retrodeck", "batocera.linux", "knulli" ):
+        # 4. CFW restore feature
+        if cfw in ("arkos", "darkos", "muos", "thera", "rocknix", "jelos", "steamos", "retrodeck", "batocera.linux", "knulli"):
             capabilities.append("restore")
 
-        # Display and device tags
+        # 5. Display & device identification
         capabilities.extend(
             [
                 f"{ax}:{ay}",
                 f"{w}x{h}",
-                info["cfw_name"].lower(),
+                cfw,
                 info["device_name"].lower(),
             ]
         )
         if f"{ax}:{ay}" == "16:10":
             capabilities.append("16:9")
-            
+
+        # 6. Analog sticks & triggers
         for i in range(info["analog_sticks"] + 1):
             capabilities.append(f"analog_{i}")
 
+        if info.get("analog_triggers") == "Y":
+            capabilities.append("analog_triggers")
+
+        # 7. Resolution tier tags
         if w >= 960 or h >= 720:
             capabilities.append("hires")
         elif w < 640 or h < 480:
@@ -611,28 +594,32 @@ class HardwareDetector:
 
         if (w / h) >= 1.5 or w >= 854:
             capabilities.append("wide")
-        
-        # Cumulative RAM tiers
+
+        # 8. Cumulative RAM tiers
         ram_gb = info["device_ram"]
         for tier in (1, 2, 4, 8, 16, 32):
             if ram_gb >= tier:
                 capabilities.append(f"{tier}gb")
 
-        if info["device_ram"] >= 4:
+        # 9. ultra tag (Requires >= 4GB RAM AND excludes budget/low-power SoCs)
+        low_power_cpus = {"rk3326", "h700", "a133", "a133plus", "a527", "px30", "sun50iw9", "sun50iw10"}
+        if ram_gb >= 4 and not any(lpc in cpu for lpc in low_power_cpus):
             capabilities.append("ultra")
 
         return {
-            "name": info["cfw_name"].lower(),
+            "name": cfw,
             "version": info["cfw_version"],
             "device": info["device_name"].lower(),
             "resolution": (w, h),
             "analogsticks": info["analog_sticks"],
+            "analogtriggers": info.get("analog_triggers", "N"),
             "cpu": info["device_cpu"],
             "capabilities": capabilities,
             "primary_arch": info["device_arch"],
             "ram": ram_mb,
             "glibc": _normalize_glibc(info["cfw_glibc"]),
         }
+
 
 # Compatibility API Endpoints
 def hardware_info() -> Dict[str, Any]:
@@ -649,6 +636,7 @@ if __name__ == "__main__":
     import json
 
     print(json.dumps(device_info(), indent=2))
+
 
 # ==============================================================================
 # Legacy Compatibility Shims for PortMaster / Harbourmaster v1 API
@@ -678,4 +666,4 @@ def expand_info(
   merged = det.to_harbourmaster_dict()
   if isinstance(info, dict):
     info.update(merged)
-  return info
+  return info    
