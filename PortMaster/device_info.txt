@@ -512,12 +512,30 @@ _read_dts_be32() {
     echo $(( 0x${_hex:-0} ))
 }
 
-# Helper 2: POSIX-compliant zero-fork line reader
+# Helper 2: POSIX zero-fork line reader
 _read_line() {
     [ -r "$1" ] || return 1
     _val=""
     read -r _val < "$1" 2>/dev/null
     echo "$_val"
+}
+
+# Helper 3: Validates if an IIO SARADC channel is a real stick or floating/saturated
+_is_iio_channel_active() {
+    local ch="$1"
+    local raw_file="/sys/bus/iio/devices/iio:device0/in_voltage${ch}_raw"
+    [ -r "$raw_file" ] || return 0 # If IIO not accessible, assume valid
+
+    local raw_val
+    raw_val="$(_read_line "$raw_file")"
+    raw_val=$(( raw_val + 0 ))
+
+    # A resting potentiometer is centered (50 < raw < 950 on 10-bit / 200 < raw < 3900 on 12-bit)
+    # An open/unpopulated pin is pulled hard to rail (1023 / 4095) or 0
+    if [ "$raw_val" -ge 1020 ] || [ "$raw_val" -le 5 ]; then
+        return 1 # Inactive / Disconnected
+    fi
+    return 0 # Real connected analog stick
 }
 
 detect_dynamic_controls() {
@@ -539,12 +557,11 @@ detect_dynamic_controls() {
                 ;;
         esac
 
-        # 2. Touchscreen & Pointer Property Filtering (FTS3528, Goodix, Elan)
+        # 2. Touchscreen & Pointer Property Filtering
         if [ -r "$input_dir/properties" ]; then
             local props
             props="$(_read_line "$input_dir/properties")"
             local prop_val=$(( 0x${props:-0} ))
-            # INPUT_PROP_DIRECT (0x1) = Touchscreen, INPUT_PROP_ACCELEROMETER (0x4)
             [ $(( prop_val & 0x5 )) -ne 0 ] && continue
         fi
 
@@ -552,7 +569,7 @@ detect_dynamic_controls() {
         raw_abs="$(_read_line "$input_dir/capabilities/abs")"
         [ -z "$raw_abs" ] && continue
 
-        # Filter out 64-bit Multi-Touch Touchscreens (ABS_MT bits >= bit 47)
+        # Filter out 64-bit Multi-Touch Touchscreens
         case "$raw_abs" in
             ??????????*) continue ;;
         esac
@@ -560,13 +577,13 @@ detect_dynamic_controls() {
         local current_sticks=0
         local dt_resolved=0
 
-        # 3. HARDWARE CHECK: Device Tree of_node (ARM Handhelds)
+        # 3. HARDWARE CHECK: Device Tree of_node
         local of_dir=""
         [ -d "$input_dir/device/of_node" ] && of_dir="$input_dir/device/of_node"
         [ -z "$of_dir" ] && [ -d "$input_dir/device" ] && of_dir="$input_dir/device"
 
         if [ -n "$of_dir" ]; then
-            # Priority 1: Multiplexed ADC (amux-count is the exact stick channel count)
+            # Priority 1: Multiplexed ADC (amux-count)
             if [ -f "$of_dir/amux-count" ]; then
                 local amux_cnt
                 amux_cnt=$(_read_dts_be32 "$of_dir/amux-count")
@@ -590,18 +607,25 @@ detect_dynamic_controls() {
                 fi
             fi
 
-            # Priority 3: direct-adc / mainline io-channels (when not using an amux)
+            # Priority 3: direct-adc / io-channels (with IIO Voltage Verification)
             if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/io-channels" ]; then
                 local io_sz
                 io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
                 local num_channels=$(( io_sz / 8 ))
 
-                if [ "$num_channels" -ge 6 ]; then
-                    current_sticks=2; has_triggers="Y"; dt_resolved=1
-                elif [ "$num_channels" -ge 4 ]; then
-                    current_sticks=2; dt_resolved=1
+                if [ "$num_channels" -ge 4 ]; then
+                    # Check if channels 0 and 1 (Right Stick) are actually connected or pegged at 1023
+                    if _is_iio_channel_active 0 && _is_iio_channel_active 1; then
+                        current_sticks=2
+                        [ "$num_channels" -ge 6 ] && has_triggers="Y"
+                    else
+                        # Right stick is unpopulated / pegged at rail -> only 1 real stick
+                        current_sticks=1
+                    fi
+                    dt_resolved=1
                 elif [ "$num_channels" -ge 2 ]; then
-                    current_sticks=1; dt_resolved=1
+                    current_sticks=1
+                    dt_resolved=1
                 fi
             fi
         fi
