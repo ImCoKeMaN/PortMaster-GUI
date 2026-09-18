@@ -2,6 +2,7 @@
 # ==============================================================================
 # PortMaster Device Information Provider (Dynamic Modernized v0.2.0)
 # ==============================================================================
+export PATH="$PATH:/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin"
 
 (return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
 
@@ -32,13 +33,27 @@ fi
 # ------------------------------------------------------------------------------
 # 1. ARCHITECTURE & MULTI-LIB COMPATIBILITY
 # ------------------------------------------------------------------------------
-RAW_ARCH="$(uname -m 2>/dev/null || echo "unknown")"
+RAW_ARCH="$(uname -m 2>/dev/null)"
+
 case "$RAW_ARCH" in
-    aarch64|arm64) export DEVICE_ARCH="aarch64" ;;
+    aarch64|arm64)       export DEVICE_ARCH="aarch64" ;;
     armv7*|armhf|armv8l) export DEVICE_ARCH="armhf" ;;
-    x86_64|amd64)  export DEVICE_ARCH="x86_64" ;;
-    i*86|x86)      export DEVICE_ARCH="x86" ;;
-    *)             export DEVICE_ARCH="$RAW_ARCH" ;;
+    x86_64|amd64)        export DEVICE_ARCH="x86_64" ;;
+    i*86|x86)            export DEVICE_ARCH="x86" ;;
+    *)
+        # Fallback to filesystem dynamic linkers if uname is missing or unrecognized
+        if [ -f "/lib/ld-linux-aarch64.so.1" ] || [ -f "/usr/lib/ld-linux-aarch64.so.1" ]; then
+            export DEVICE_ARCH="aarch64"
+        elif [ -f "/lib/ld-linux-x86-64.so.2" ] || [ -f "/usr/lib/ld-linux-x86-64.so.2" ]; then
+            export DEVICE_ARCH="x86_64"
+        elif [ -f "/lib/ld-linux-armhf.so.3" ] || [ -f "/usr/lib/ld-linux-armhf.so.3" ]; then
+            export DEVICE_ARCH="armhf"
+        elif [ -f "/lib/ld-linux.so.2" ] || [ -f "/usr/lib/ld-linux.so.2" ]; then
+            export DEVICE_ARCH="x86"
+        else
+            export DEVICE_ARCH="aarch64" # Safe default for modern handhelds
+        fi
+        ;;
 esac
 
 export DEVICE_HAS_ARMHF="N"
@@ -49,7 +64,9 @@ export DEVICE_HAS_X86_64="N"
 case "$DEVICE_ARCH" in
     aarch64)
         export DEVICE_HAS_AARCH64="Y"
-        if [ -d "/lib/arm-linux-gnueabihf" ] || [ -d "/usr/lib/arm-linux-gnueabihf" ] || [ -d "/lib32" ] || [ -d "/usr/lib32" ] || [ -f "/lib/ld-linux-armhf.so.3" ]; then
+        if [ -d "/lib/arm-linux-gnueabihf" ] || [ -d "/usr/lib/arm-linux-gnueabihf" ] || \
+           [ -d "/lib32" ] || [ -d "/usr/lib32" ] || \
+           [ -f "/lib/ld-linux-armhf.so.3" ] || [ -f "/usr/lib/ld-linux-armhf.so.3" ]; then
             export DEVICE_HAS_ARMHF="Y"
         fi
         ;;
@@ -58,7 +75,8 @@ case "$DEVICE_ARCH" in
         ;;
     x86_64)
         export DEVICE_HAS_X86_64="Y"
-        if [ -d "/lib/i386-linux-gnu" ] || [ -d "/usr/lib/i386-linux-gnu" ] || [ -d "/usr/lib32" ] || [ -f "/lib/ld-linux.so.2" ]; then
+        if [ -d "/lib/i386-linux-gnu" ] || [ -d "/usr/lib/i386-linux-gnu" ] || \
+           [ -d "/usr/lib32" ] || [ -f "/lib/ld-linux.so.2" ] || [ -f "/usr/lib/ld-linux.so.2" ]; then
             export DEVICE_HAS_X86="Y"
         fi
         ;;
@@ -183,6 +201,16 @@ elif [ -f "/etc/amber_version" ] || [ -f "/etc/amberelec_version" ]; then
 elif [ -f "/usr/share/batocera/batocera.version" ]; then
     export CFW_NAME="Batocera.linux"
     export CFW_VERSION="$(tr -d '\r\n' < /usr/share/batocera/batocera.version 2>/dev/null)"
+
+# 2j. plumOS
+elif [ -d "/storage/plumos" ] || [ -f "/etc/plumos-release" ] || grep -qiE '^(ID=plumos|NAME=.*plumOS)' /etc/os-release /usr/lib/os-release 2>/dev/null; then
+    export CFW_NAME="plumOS"
+    if [ -f "/etc/plumos-release" ]; then
+        export CFW_VERSION="$(tr -d '\r\n' < /etc/plumos-release 2>/dev/null)"
+    elif [ -f "/etc/os-release" ]; then
+        export CFW_VERSION="$(grep -iE '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"\r ')"
+    fi
+    [ -z "$CFW_VERSION" ] && export CFW_VERSION="0.1.0"
 
 # 2j. Specific ArkOS/dArkOS Version File Fallbacks
 elif [ -f "/etc/darkos_version" ] || [ -f "/etc/arkos_version" ]; then
@@ -337,7 +365,11 @@ export DEVICE_RAM=1
 if [ -f "/proc/meminfo" ]; then
     MEM_TOTAL_KB="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
     if [ -n "$MEM_TOTAL_KB" ] && [ "$MEM_TOTAL_KB" -gt 0 ]; then
-        export DEVICE_RAM=$(( (MEM_TOTAL_KB + 1048575) / 1048576 ))
+        # Add ~12.5% (+ KB/8) to compensate for kernel-reserved RAM, then get GB
+        export DEVICE_RAM=$(( (MEM_TOTAL_KB + (MEM_TOTAL_KB / 8)) / 1048576 ))
+
+        # 0 GB -> 512 MB | 1-4 GB -> rounded MB | > 4 GB -> actual MB
+        export DEVICE_RAM_MB=$(( DEVICE_RAM > 4 ? (MEM_TOTAL_KB + 1023) / 1024 : (DEVICE_RAM ? DEVICE_RAM * 1024 : 512) ))
     fi
 fi
 
@@ -389,7 +421,7 @@ if [ "$RES_RESOLVED" -eq 0 ] && [ -f "/sys/class/graphics/fb0/virtual_size" ]; t
 fi
 
 # Binary helper fallback
-if [ -x "$CONTROL_DIR/sdl_resolution" ]; then
+if [ "$RES_RESOLVED" -eq 0 ] && [ -z "$NO_SDL_RESOLUTION" ] && [ -x "$CONTROL_DIR/sdl_resolution" ]; then
     RES_OUT="$("$CONTROL_DIR/sdl_resolution" 2>/dev/null)"
     if [ -n "$RES_OUT" ]; then
         export DISPLAY_WIDTH="$(echo "$RES_OUT" | awk '{print $1}')"
@@ -446,59 +478,249 @@ fi
 # ------------------------------------------------------------------------------
 # 5. CONTROLS (ANALOG STICKS)
 # ------------------------------------------------------------------------------
+# Helper 1: Universal Big-Endian DTS reader (od -> hexdump -> xxd)
+_read_dts_be32() {
+    _hex=""
+    if command -v od >/dev/null 2>&1; then
+        _hex=$(od -An -N4 -tx1 "$1" 2>/dev/null | tr -d ' \n')
+    elif command -v hexdump >/dev/null 2>&1; then
+        _hex=$(hexdump -n4 -e '1/1 "%02x"' "$1" 2>/dev/null)
+    elif command -v xxd >/dev/null 2>&1; then
+        _hex=$(xxd -p -l 4 "$1" 2>/dev/null)
+    fi
+    echo $(( 0x${_hex:-0} ))
+}
+
+# Helper 2: POSIX-compliant zero-fork line reader
+_read_line() {
+    [ -r "$1" ] || return 1
+    _val=""
+    read -r _val < "$1" 2>/dev/null
+    echo "$_val"
+}
+
+# Helper 1: Universal Big-Endian DTS reader (od -> hexdump -> xxd)
+_read_dts_be32() {
+    _hex=""
+    if command -v od >/dev/null 2>&1; then
+        _hex=$(od -An -N4 -tx1 "$1" 2>/dev/null | tr -d ' \n')
+    elif command -v hexdump >/dev/null 2>&1; then
+        _hex=$(hexdump -n4 -e '1/1 "%02x"' "$1" 2>/dev/null)
+    elif command -v xxd >/dev/null 2>&1; then
+        _hex=$(xxd -p -l 4 "$1" 2>/dev/null)
+    fi
+    echo $(( 0x${_hex:-0} ))
+}
+
+# Helper 2: POSIX-compliant zero-fork line reader
+_read_line() {
+    [ -r "$1" ] || return 1
+    _val=""
+    read -r _val < "$1" 2>/dev/null
+    echo "$_val"
+}
+
 detect_dynamic_controls() {
     local max_sticks=0
     local has_triggers="N"
 
-    for abs_file in /sys/class/input/input*/capabilities/abs; do
-        [ -f "$abs_file" ] || continue
-        
-        local dev_name="$(cat "${abs_file%/*}/name" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
-        case "$dev_name" in
-            *touch*|*stylus*|*accel*|*gyro*|*sensor*|*lid*|*power*|*sleep*) continue ;;
+    for input_dir in /sys/class/input/input*; do
+        [ -d "$input_dir" ] || continue
+
+        # 1. Device name filtering
+        local dev_name
+        dev_name="$(_read_line "$input_dir/name")"
+        local dev_name_l
+        dev_name_l="$(echo "$dev_name" | tr '[:upper:]' '[:lower:]')"
+
+        case "$dev_name_l" in
+            *touch*|*stylus*|*digitizer*|*accel*|*gyro*|*sensor*|*lid*|*power*|*sleep*|*headset*|*vol*|*jack*|*pwrkey*|*codec*|*speaker*|*video*|*hdmi*) 
+                continue 
+                ;;
         esac
 
-        local raw_abs="$(cat "$abs_file" 2>/dev/null)"
+        # 2. Touchscreen & Pointer Property Filtering (FTS3528, Goodix, Elan)
+        if [ -r "$input_dir/properties" ]; then
+            local props
+            props="$(_read_line "$input_dir/properties")"
+            local prop_val=$(( 0x${props:-0} ))
+            # INPUT_PROP_DIRECT (0x1) = Touchscreen, INPUT_PROP_ACCELEROMETER (0x4)
+            [ $(( prop_val & 0x5 )) -ne 0 ] && continue
+        fi
+
+        local raw_abs
+        raw_abs="$(_read_line "$input_dir/capabilities/abs")"
         [ -z "$raw_abs" ] && continue
 
-        local lowest_word="${raw_abs##* }"
-        lowest_word="${lowest_word##*,}"
-        local val=$(( 0x${lowest_word} )) 2>/dev/null || continue
+        # Filter out 64-bit Multi-Touch Touchscreens (ABS_MT bits >= bit 47)
+        case "$raw_abs" in
+            ??????????*) continue ;;
+        esac
 
         local current_sticks=0
-        # Stick 1: ABS_X (bit 0) & ABS_Y (bit 1) -> 0x3
-        if [ $(( val & 0x3 )) -eq 3 ]; then
-            current_sticks=1
-            # Stick 2: ABS_RX (bit 3) & ABS_RY (bit 4) -> 0x18 OR ABS_Z (bit 2) & ABS_RZ (bit 5) -> 0x24
-            if [ $(( val & 0x18 )) -eq 24 ] || [ $(( val & 0x24 )) -eq 36 ]; then
-                current_sticks=2
+        local dt_resolved=0
+
+        # 3. HARDWARE CHECK: Device Tree of_node (ARM Handhelds)
+        local of_dir=""
+        [ -d "$input_dir/device/of_node" ] && of_dir="$input_dir/device/of_node"
+        [ -z "$of_dir" ] && [ -d "$input_dir/device" ] && of_dir="$input_dir/device"
+
+        if [ -n "$of_dir" ]; then
+            # Priority 1: Multiplexed ADC (amux-count is the exact stick channel count)
+            if [ -f "$of_dir/amux-count" ]; then
+                local amux_cnt
+                amux_cnt=$(_read_dts_be32 "$of_dir/amux-count")
+                if [ "$amux_cnt" -gt 0 ]; then
+                    if [ "$amux_cnt" -ge 6 ]; then
+                        current_sticks=2; has_triggers="Y"; dt_resolved=1
+                    elif [ "$amux_cnt" -ge 4 ]; then
+                        current_sticks=2; dt_resolved=1
+                    elif [ "$amux_cnt" -ge 2 ]; then
+                        current_sticks=1; dt_resolved=1
+                    fi
+                fi
+            fi
+
+            # Priority 2: Multiplexer GPIO lines
+            if [ "$dt_resolved" -eq 0 ]; then
+                if [ -f "$of_dir/amux-b-gpios" ]; then
+                    current_sticks=2; dt_resolved=1
+                elif [ -f "$of_dir/amux-a-gpios" ]; then
+                    current_sticks=1; dt_resolved=1
+                fi
+            fi
+
+            # Priority 3: direct-adc / mainline io-channels (when not using an amux)
+            if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/io-channels" ]; then
+                local io_sz
+                io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
+                local num_channels=$(( io_sz / 8 ))
+
+                if [ "$num_channels" -ge 6 ]; then
+                    current_sticks=2; has_triggers="Y"; dt_resolved=1
+                elif [ "$num_channels" -ge 4 ]; then
+                    current_sticks=2; dt_resolved=1
+                elif [ "$num_channels" -ge 2 ]; then
+                    current_sticks=1; dt_resolved=1
+                fi
             fi
         fi
-        [ "$current_sticks" -gt "$max_sticks" ] && max_sticks="$current_sticks"
 
-        # Analog Triggers:
-        # Requires ABS_GAS + ABS_BRAKE (0x600) OR all 6 axes X+Y+RX+RY+Z+RZ (0x3f / 63)
-        # (Avoids false positive when Z/RZ acts as Stick 2 without RX/RY)
-        if [ $(( val & 0x600 )) -eq 1536 ] || [ $(( val & 0x3f )) -eq 63 ]; then
-            has_triggers="Y"
+        # 4. EVDEV BITMASK: For x86 Handhelds (Steam Deck/ROG Ally), USB, & Bluetooth
+        if [ "$dt_resolved" -eq 0 ]; then
+            local lowest_word="${raw_abs##* }"
+            lowest_word="${lowest_word##*,}"
+            local val=$(( 0x${lowest_word:-0} )) 2>/dev/null || continue
+
+            # Stick 1: ABS_X (0x1) & ABS_Y (0x2) -> 0x3
+            if [ $(( val & 0x3 )) -eq 3 ]; then
+                current_sticks=1
+                # Stick 2: ABS_RX/RY (0x18) OR ABS_Z/RZ (0x24)
+                if [ $(( val & 0x18 )) -eq 24 ] || [ $(( val & 0x24 )) -eq 36 ]; then
+                    current_sticks=2
+                fi
+            fi
+
+            # Analog Triggers: ABS_GAS/BRAKE (0x600) OR 6-axis XInput (0x3f)
+            if [ $(( val & 0x600 )) -eq 1536 ] || [ $(( val & 0x3f )) -eq 63 ]; then
+                has_triggers="Y"
+            fi
         fi
+
+        [ "$current_sticks" -gt "$max_sticks" ] && max_sticks="$current_sticks"
     done
 
-    # Fallback for GPIO-only buttons
-    if [ "$max_sticks" -eq 0 ]; then
-        local u_name="$(echo "$DEVICE_NAME" | tr '[:lower:]' '[:upper:]')"
-        case "$u_name" in
-            *"RG35XX-PLUS"*|*"RG35XX-SP"*|*"RG28XX"*|*"RG35XX-2024"*|*"RG34XX"*|*"MIYOO MINI"*) max_sticks=0 ;;
-            *"RG351V"*|*"RGB20S"*|*"RG40XX-V"*) max_sticks=1 ;;
-            *) max_sticks=2 ;;
-        esac
-    fi
-
-    export ANALOG_STICKS="$max_sticks"
-    export ANALOG_TRIGGERS="$has_triggers"
+    ANALOG_STICKS="$max_sticks"
+    ANALOG_TRIGGERS="$has_triggers"
 }
 
 detect_dynamic_controls
+
+# ------------------------------------------------------------------------------
+# 5b. CAPABILITIES & TAG GENERATION
+# ------------------------------------------------------------------------------
+CAPS=()
+
+# 1. Architecture
+CAPS+=("$DEVICE_ARCH")
+[ "$DEVICE_HAS_ARMHF" = "Y" ] && CAPS+=("armhf")
+[ "$DEVICE_HAS_AARCH64" = "Y" ] && CAPS+=("aarch64")
+[ "$DEVICE_HAS_X86" = "Y" ] && CAPS+=("x86")
+[ "$DEVICE_HAS_X86_64" = "Y" ] && CAPS+=("x86_64")
+
+# 2. Dynamic OpenGL & Vulkan feature discovery
+HAS_DESKTOP_GL="N"
+for gl_path in /usr/lib*/libGL.so* /usr/lib/*/libGL.so* /lib*/libGL.so*; do
+    if [ -e "$gl_path" ]; then HAS_DESKTOP_GL="Y"; break; fi
+done
+[ "$HAS_DESKTOP_GL" = "Y" ] && CAPS+=("opengl")
+
+for vk_path in /usr/lib*/libvulkan.so* /usr/lib/*/libvulkan.so* /usr/share/vulkan/icd.d/*.json; do
+    if [ -e "$vk_path" ]; then CAPS+=("vulkan"); break; fi
+done
+
+# 3. Hardware Power Tiers derived from Core Count, Clock Freq, and RAM
+CPU_LOWER="$(echo "$DEVICE_CPU" | tr '[:upper:]' '[:lower:]')"
+
+# 4a. 'power' - Enabled on all devices EXCEPT rk3326 and px30
+case "$CPU_LOWER" in
+    *rk3326*|*px30*)
+        # Excluded: Low power legacy SoCs
+        ;;
+    *)
+        CAPS+=("power")
+        ;;
+esac
+
+# 4b. 'ultra' - Requires >= 4GB RAM AND excludes budget/low-power SoCs
+if [ "$DEVICE_RAM" -ge 4 ]; then
+    case "$CPU_LOWER" in
+        *rk3326*|*h700*|*a133*|*a133plus*|*a527*|*px30*|*sun50iw9*|*sun50iw10*)
+            # Excluded budget chipsets even if paired with higher memory
+            ;;
+        *)
+            CAPS+=("ultra")
+            ;;
+    esac
+fi
+
+# 4. Display & Aspect Ratio
+CAPS+=("${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}")
+CAPS+=("${ASPECT_X}:${ASPECT_Y}")
+[ "$ASPECT_X" -eq 16 ] && [ "$ASPECT_Y" -eq 10 ] && CAPS+=("16:9")
+
+if [ "$DISPLAY_WIDTH" -ge 960 ] || [ "$DISPLAY_HEIGHT" -ge 720 ]; then
+    CAPS+=("hires")
+elif [ "$DISPLAY_WIDTH" -lt 640 ] || [ "$DISPLAY_HEIGHT" -lt 480 ]; then
+    CAPS+=("lowres")
+fi
+if [ "$ASPECT_X" -ge 16 ] || [ $(( ASPECT_X * 10 / ASPECT_Y )) -ge 15 ]; then
+    CAPS+=("wide")
+elif [ "$ASPECT_X" -eq "$ASPECT_Y" ]; then
+    CAPS+=("square")
+fi
+
+# 5. Analog Controller Tags
+for ((i=0; i<=$ANALOG_STICKS; i++)); do
+    CAPS+=("analog_$i")
+done
+[ "$ANALOG_TRIGGERS" = "Y" ] && CAPS+=("analog_triggers")
+
+# 6. Cumulative RAM tags
+for tier in 1 2 4 8 16 32; do
+    if [ "$DEVICE_RAM" -ge "$tier" ]; then CAPS+=("${tier}gb"); fi
+done
+
+# 7. Dynamic Restore Capability (Checks writable backup / save directory availability)
+for sav_dir in /userdata/saves /storage/roms/ports /roms/ports /mnt/SDCARD/Roms/PORTS "$HOME/.local/share"; do
+    if [ -d "$sav_dir" ] && [ -w "$sav_dir" ]; then
+        CAPS+=("restore")
+        break
+    fi
+done
+
+# Deduplicate capabilities
+export DEVICE_CAPABILITIES="$(echo "${CAPS[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[ \t]*$//')"
 
 # ------------------------------------------------------------------------------
 # 6. OUTPUT & FILE GENERATION
@@ -515,6 +737,7 @@ DEVICE_NAME="$DEVICE_NAME"
 DEVICE_CPU="$DEVICE_CPU"
 DEVICE_ARCH="$DEVICE_ARCH"
 DEVICE_RAM="$DEVICE_RAM"
+DEVICE_RAM_MB="$DEVICE_RAM_MB"
 DEVICE_HAS_ARMHF="$DEVICE_HAS_ARMHF"
 DEVICE_HAS_AARCH64="$DEVICE_HAS_AARCH64"
 DEVICE_HAS_X86="$DEVICE_HAS_X86"
@@ -526,11 +749,20 @@ ASPECT_X="$ASPECT_X"
 ASPECT_Y="$ASPECT_Y"
 ANALOG_STICKS="$ANALOG_STICKS"
 ANALOG_TRIGGERS="$ANALOG_TRIGGERS"
+DEVICE_CAPABILITIES="$DEVICE_CAPABILITIES"
 EOF
 }
 
 if [ -d "$CONTROL_DIR" ] && [ -w "$CONTROL_DIR" ]; then
-    save_device_info "$CONTROL_DIR/device_info.env"
+    # Sanitize names for filesystem safety (lowercase, replace spaces with underscores)
+    SAFE_CFW="$(echo "$CFW_NAME" | tr '[:upper:] ' '[:lower:]_')"
+    SAFE_DEV="$(echo "$DEVICE_NAME" | tr '[:upper:] ' '[:lower:]_')"
+    
+    NAMED_ENV="$CONTROL_DIR/device_info_${SAFE_CFW}_${SAFE_DEV}.env"
+    save_device_info "$NAMED_ENV"
+    
+    # Also write / link canonical device_info.env
+    #cp -f "$NAMED_ENV" "$CONTROL_DIR/device_info.env" 2>/dev/null
 fi
 
 if [ "$SOURCED" -eq 0 ]; then
@@ -548,6 +780,7 @@ if [ "$SOURCED" -eq 0 ]; then
     printf "%-20s: %sx%s (%s:%s)\n" "DISPLAY" "$DISPLAY_WIDTH" "$DISPLAY_HEIGHT" "$ASPECT_X" "$ASPECT_Y"
     printf "%-20s: %s\n" "ORIENTATION" "$DISPLAY_ORIENTATION"
     printf "%-20s: %s\n" "ANALOG_STICKS" "$ANALOG_STICKS"
-    printf "%-20s: %s\n" "ANALOG_TRIGGERS" "$ANALOG_TRIGGERS"    
+    printf "%-20s: %s\n" "ANALOG_TRIGGERS" "$ANALOG_TRIGGERS"
+    printf "%-20s: %s\n" "DEVICE_CAPABILITIES" "$DEVICE_CAPABILITIES"    
     echo "========================================"
 fi
