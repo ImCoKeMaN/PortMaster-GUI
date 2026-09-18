@@ -762,7 +762,7 @@ if [ -d "$CONTROL_DIR" ] && [ -w "$CONTROL_DIR" ]; then
     save_device_info "$NAMED_ENV"
     
     # Also write / link canonical device_info.env
-    #cp -f "$NAMED_ENV" "$CONTROL_DIR/device_info.env" 2>/dev/null
+    cp -f "$NAMED_ENV" "$CONTROL_DIR/device_info.env" 2>/dev/null
 fi
 
 if [ "$SOURCED" -eq 0 ]; then
