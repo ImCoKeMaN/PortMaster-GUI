@@ -478,28 +478,7 @@ fi
 # ------------------------------------------------------------------------------
 # 5. CONTROLS (ANALOG STICKS)
 # ------------------------------------------------------------------------------
-# Helper 1: Universal Big-Endian DTS reader (od -> hexdump -> xxd)
-_read_dts_be32() {
-    _hex=""
-    if command -v od >/dev/null 2>&1; then
-        _hex=$(od -An -N4 -tx1 "$1" 2>/dev/null | tr -d ' \n')
-    elif command -v hexdump >/dev/null 2>&1; then
-        _hex=$(hexdump -n4 -e '1/1 "%02x"' "$1" 2>/dev/null)
-    elif command -v xxd >/dev/null 2>&1; then
-        _hex=$(xxd -p -l 4 "$1" 2>/dev/null)
-    fi
-    echo $(( 0x${_hex:-0} ))
-}
-
-# Helper 2: POSIX-compliant zero-fork line reader
-_read_line() {
-    [ -r "$1" ] || return 1
-    _val=""
-    read -r _val < "$1" 2>/dev/null
-    echo "$_val"
-}
-
-# Helper 1: Universal Big-Endian DTS reader (od -> hexdump -> xxd)
+# Helper 1: Universal Big-Endian DTS integer reader
 _read_dts_be32() {
     _hex=""
     if command -v od >/dev/null 2>&1; then
@@ -520,18 +499,17 @@ _read_line() {
     echo "$_val"
 }
 
-# Helper 3: Validates if an IIO SARADC channel is a real stick or floating/saturated
+# Helper 3: Validates if an IIO SARADC channel is a real stick or floating/pegged
 _is_iio_channel_active() {
     local ch="$1"
     local raw_file="/sys/bus/iio/devices/iio:device0/in_voltage${ch}_raw"
-    [ -r "$raw_file" ] || return 0 # If IIO not accessible, assume valid
+    [ -r "$raw_file" ] || return 0
 
     local raw_val
     raw_val="$(_read_line "$raw_file")"
     raw_val=$(( raw_val + 0 ))
 
-    # A resting potentiometer is centered (50 < raw < 950 on 10-bit / 200 < raw < 3900 on 12-bit)
-    # An open/unpopulated pin is pulled hard to rail (1023 / 4095) or 0
+    # Saturated rail (>= 1020 on 10-bit) or 0 indicates unconnected/floating line
     if [ "$raw_val" -ge 1020 ] || [ "$raw_val" -le 5 ]; then
         return 1 # Inactive / Disconnected
     fi
@@ -577,14 +555,31 @@ detect_dynamic_controls() {
         local current_sticks=0
         local dt_resolved=0
 
-        # 3. HARDWARE CHECK: Device Tree of_node
+        # 3. HARDWARE CHECK: Device Tree of_node (ARM Handhelds)
         local of_dir=""
         [ -d "$input_dir/device/of_node" ] && of_dir="$input_dir/device/of_node"
         [ -z "$of_dir" ] && [ -d "$input_dir/device" ] && of_dir="$input_dir/device"
 
         if [ -n "$of_dir" ]; then
-            # Priority 1: Multiplexed ADC (amux-count)
-            if [ -f "$of_dir/amux-count" ]; then
+            # ------------------------------------------------------------------
+            # Case A: direct-adc is set -> amux is IGNORED by driver
+            # ------------------------------------------------------------------
+            if [ -f "$of_dir/direct-adc" ] && [ -f "$of_dir/io-channels" ]; then
+                local io_sz
+                io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
+                local num_channels=$(( io_sz / 8 ))
+
+                if [ "$num_channels" -ge 4 ]; then
+                    current_sticks=2; dt_resolved=1
+                elif [ "$num_channels" -ge 2 ]; then
+                    current_sticks=1; dt_resolved=1
+                fi
+            fi
+
+            # ------------------------------------------------------------------
+            # Case B: Multiplexed ADC (direct-adc NOT set -> uses amux-count)
+            # ------------------------------------------------------------------
+            if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/amux-count" ]; then
                 local amux_cnt
                 amux_cnt=$(_read_dts_be32 "$of_dir/amux-count")
                 if [ "$amux_cnt" -gt 0 ]; then
@@ -598,7 +593,9 @@ detect_dynamic_controls() {
                 fi
             fi
 
-            # Priority 2: Multiplexer GPIO lines
+            # ------------------------------------------------------------------
+            # Case C: Multiplexer GPIO lines
+            # ------------------------------------------------------------------
             if [ "$dt_resolved" -eq 0 ]; then
                 if [ -f "$of_dir/amux-b-gpios" ]; then
                     current_sticks=2; dt_resolved=1
@@ -607,19 +604,20 @@ detect_dynamic_controls() {
                 fi
             fi
 
-            # Priority 3: direct-adc / io-channels (with IIO Voltage Verification)
+            # ------------------------------------------------------------------
+            # Case D: Mainline adc-joystick / unmultiplexed SARADC with IIO check
+            # ------------------------------------------------------------------
             if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/io-channels" ]; then
                 local io_sz
                 io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
                 local num_channels=$(( io_sz / 8 ))
 
                 if [ "$num_channels" -ge 4 ]; then
-                    # Check if channels 0 and 1 (Right Stick) are actually connected or pegged at 1023
+                    # Check if Right Stick ADC lines (channels 0 & 1) are real or pegged at 1023
                     if _is_iio_channel_active 0 && _is_iio_channel_active 1; then
                         current_sticks=2
                         [ "$num_channels" -ge 6 ] && has_triggers="Y"
                     else
-                        # Right stick is unpopulated / pegged at rail -> only 1 real stick
                         current_sticks=1
                     fi
                     dt_resolved=1
