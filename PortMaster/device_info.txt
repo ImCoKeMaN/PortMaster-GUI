@@ -478,7 +478,7 @@ fi
 # ------------------------------------------------------------------------------
 # 5. CONTROLS (ANALOG STICKS)
 # ------------------------------------------------------------------------------
-# Helper 1: Universal Big-Endian DTS integer reader
+# Helper 1: Universal Big-Endian DTS integer reader (od -> hexdump -> xxd)
 _read_dts_be32() {
     _hex=""
     if command -v od >/dev/null 2>&1; then
@@ -505,11 +505,10 @@ _is_iio_channel_active() {
     local raw_file="/sys/bus/iio/devices/iio:device0/in_voltage${ch}_raw"
     [ -r "$raw_file" ] || return 0
 
-    local raw_val
-    raw_val="$(_read_line "$raw_file")"
+    local raw_val="$(_read_line "$raw_file")"
     raw_val=$(( raw_val + 0 ))
 
-    # Saturated rail (>= 1020 on 10-bit) or 0 indicates unconnected/floating line
+    # Saturated rail (>= 1020 on 10-bit / >= 4090 on 12-bit) or 0 indicates unconnected/floating line
     if [ "$raw_val" -ge 1020 ] || [ "$raw_val" -le 5 ]; then
         return 1 # Inactive / Disconnected
     fi
@@ -517,143 +516,148 @@ _is_iio_channel_active() {
 }
 
 detect_dynamic_controls() {
-    local max_sticks=0
-    local has_triggers="N"
+    local has_physical_dt_joypad=0
+    local dt_joypad_sticks=0
+    local dt_joypad_triggers="N"
+
+    # 1. Authoritative Device Tree Hardware Scan (ARM SBCs)
+    for dt_node in /sys/firmware/devicetree/base/*joypad* /sys/firmware/devicetree/base/*/*joypad* \
+                   /sys/firmware/devicetree/base/*joystick* /sys/firmware/devicetree/base/*/*joystick* \
+                   /sys/class/input/input*/device/of_node; do
+        [ -d "$dt_node" ] || continue
+
+        # Strict guard: Must contain ADC joystick properties (filters out power keys and audio codecs)
+        [ -f "$dt_node/io-channels" ] || [ -f "$dt_node/amux-count" ] || [ -f "$dt_node/direct-adc" ] || continue
+
+        has_physical_dt_joypad=1
+
+        # Case A: direct-adc is set -> amux is ignored by driver
+        if [ -f "$dt_node/direct-adc" ] && [ -f "$dt_node/io-channels" ]; then
+            local io_sz=$(wc -c < "$dt_node/io-channels" 2>/dev/null || echo 0)
+            local num_channels=$(( io_sz / 8 ))
+            if [ "$num_channels" -ge 4 ]; then
+                dt_joypad_sticks=2
+            elif [ "$num_channels" -ge 2 ]; then
+                dt_joypad_sticks=1
+            fi
+        fi
+
+        # Case B: amux-count (Multiplexed ADC)
+        if [ "$dt_joypad_sticks" -eq 0 ] && [ -f "$dt_node/amux-count" ]; then
+            local amux_cnt=$(_read_dts_be32 "$dt_node/amux-count")
+            if [ "$amux_cnt" -ge 6 ]; then
+                dt_joypad_sticks=2; dt_joypad_triggers="Y"
+            elif [ "$amux_cnt" -ge 4 ]; then
+                dt_joypad_sticks=2
+            elif [ "$amux_cnt" -ge 2 ]; then
+                dt_joypad_sticks=1
+            fi
+        fi
+
+        # Case C: io-channels + SARADC Live Voltage Verification
+        if [ "$dt_joypad_sticks" -eq 0 ] && [ -f "$dt_node/io-channels" ]; then
+            local io_sz=$(wc -c < "$dt_node/io-channels" 2>/dev/null || echo 0)
+            local num_channels=$(( io_sz / 8 ))
+            if [ "$num_channels" -ge 4 ]; then
+                if _is_iio_channel_active 0 && _is_iio_channel_active 1; then
+                    dt_joypad_sticks=2
+                    [ "$num_channels" -ge 6 ] && dt_joypad_triggers="Y"
+                else
+                    dt_joypad_sticks=1
+                fi
+            elif [ "$num_channels" -ge 2 ]; then
+                dt_joypad_sticks=1
+            fi
+        fi
+
+        [ "$dt_joypad_sticks" -gt 0 ] && break
+    done
+
+    # 2. Input Subsystem Telemetry: Physical Hardware vs Virtual uinput Daemons
+    local has_physical_hw_stick=0
+    local has_physical_hw_trig="N"
+    local virtual_claimed_sticks=0
+    local virtual_claimed_trig="N"
 
     for input_dir in /sys/class/input/input*; do
         [ -d "$input_dir" ] || continue
+        local dev_name="$(_read_line "$input_dir/name")"
+        local dev_props="$(_read_line "$input_dir/properties")"
+        local dev_abs="$(_read_line "$input_dir/capabilities/abs")"
 
-        # 1. Device name filtering
-        local dev_name
-        dev_name="$(_read_line "$input_dir/name")"
-        local dev_name_l
-        dev_name_l="$(echo "$dev_name" | tr '[:upper:]' '[:lower:]')"
+        # Skip devices without absolute axes
+        if [ -z "$dev_abs" ] || [ "$dev_abs" = "0" ]; then
+            continue
+        fi
 
-        case "$dev_name_l" in
-            *touch*|*stylus*|*digitizer*|*accel*|*gyro*|*sensor*|*lid*|*power*|*sleep*|*headset*|*vol*|*jack*|*pwrkey*|*codec*|*speaker*|*video*|*hdmi*) 
-                continue 
-                ;;
+        # Filter Touchscreens & Direct Pointers (PROP_DIRECT=1, PROP_POINTER=2, PROP_SEMI_MT=8)
+        [ -n "$dev_props" ] && [ $(( 0x${dev_props:-0} & 0xb )) -ne 0 ] && continue
+
+        # Filter Multi-Touch bitmasks (screens / digitizers)
+        case "$dev_abs" in ??????????*) continue ;; esac
+
+        local lowest="${dev_abs##* }"
+        lowest="${lowest##*,}"
+        local val=$(( 0x${lowest:-0} ))
+
+        # Filter Touch/Stylus/Digitizers via ABS_PRESSURE (bit 24) or ABS_DISTANCE (bit 25)
+        [ $(( val & 0x3000000 )) -ne 0 ] && continue
+
+        # Filter isolated 2D pointers that have ONLY ABS_X/Y and no other gamepad axes
+        if [ $(( val & 0x3 )) -eq 3 ] && [ $(( val & 0x3063c )) -eq 0 ]; then
+            continue
+        fi
+
+        # Classify bus: Physical Hardware vs Virtual (uinput daemon)
+        local dev_path=""
+        [ -e "$input_dir/device" ] && dev_path=$(readlink -f "$input_dir/device" 2>/dev/null)
+        local is_virtual=0
+        case "$dev_path" in
+            */devices/virtual/*|"") is_virtual=1 ;;
         esac
 
-        # 2. Touchscreen & Pointer Property Filtering
-        if [ -r "$input_dir/properties" ]; then
-            local props
-            props="$(_read_line "$input_dir/properties")"
-            local prop_val=$(( 0x${props:-0} ))
-            [ $(( prop_val & 0x5 )) -ne 0 ] && continue
+        local node_sticks=0
+        local node_trig="N"
+
+        [ $(( val & 0x3 )) -eq 3 ] && node_sticks=1
+        { [ $(( val & 0x18 )) -eq 24 ] || [ $(( val & 0x24 )) -eq 36 ]; } && node_sticks=2
+        { [ $(( val & 0x600 )) -eq 1536 ] || [ $(( val & 0x3f )) -eq 63 ]; } && node_trig="Y"
+
+        if [ "$is_virtual" -eq 0 ]; then
+            [ "$node_sticks" -gt "$has_physical_hw_stick" ] && has_physical_hw_stick="$node_sticks"
+            [ "$node_trig" = "Y" ] && has_physical_hw_trig="Y"
+        else
+            [ "$node_sticks" -gt "$virtual_claimed_sticks" ] && virtual_claimed_sticks="$node_sticks"
+            [ "$node_trig" = "Y" ] && virtual_claimed_trig="Y"
         fi
-
-        local raw_abs
-        raw_abs="$(_read_line "$input_dir/capabilities/abs")"
-        [ -z "$raw_abs" ] && continue
-
-        # Filter out 64-bit Multi-Touch Touchscreens
-        case "$raw_abs" in
-            ??????????*) continue ;;
-        esac
-
-        local current_sticks=0
-        local dt_resolved=0
-
-        # 3. HARDWARE CHECK: Device Tree of_node (ARM Handhelds)
-        local of_dir=""
-        [ -d "$input_dir/device/of_node" ] && of_dir="$input_dir/device/of_node"
-        [ -z "$of_dir" ] && [ -d "$input_dir/device" ] && of_dir="$input_dir/device"
-
-        if [ -n "$of_dir" ]; then
-            # ------------------------------------------------------------------
-            # Case A: direct-adc is set -> amux is IGNORED by driver
-            # ------------------------------------------------------------------
-            if [ -f "$of_dir/direct-adc" ] && [ -f "$of_dir/io-channels" ]; then
-                local io_sz
-                io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
-                local num_channels=$(( io_sz / 8 ))
-
-                if [ "$num_channels" -ge 4 ]; then
-                    current_sticks=2; dt_resolved=1
-                elif [ "$num_channels" -ge 2 ]; then
-                    current_sticks=1; dt_resolved=1
-                fi
-            fi
-
-            # ------------------------------------------------------------------
-            # Case B: Multiplexed ADC (direct-adc NOT set -> uses amux-count)
-            # ------------------------------------------------------------------
-            if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/amux-count" ]; then
-                local amux_cnt
-                amux_cnt=$(_read_dts_be32 "$of_dir/amux-count")
-                if [ "$amux_cnt" -gt 0 ]; then
-                    if [ "$amux_cnt" -ge 6 ]; then
-                        current_sticks=2; has_triggers="Y"; dt_resolved=1
-                    elif [ "$amux_cnt" -ge 4 ]; then
-                        current_sticks=2; dt_resolved=1
-                    elif [ "$amux_cnt" -ge 2 ]; then
-                        current_sticks=1; dt_resolved=1
-                    fi
-                fi
-            fi
-
-            # ------------------------------------------------------------------
-            # Case C: Multiplexer GPIO lines
-            # ------------------------------------------------------------------
-            if [ "$dt_resolved" -eq 0 ]; then
-                if [ -f "$of_dir/amux-b-gpios" ]; then
-                    current_sticks=2; dt_resolved=1
-                elif [ -f "$of_dir/amux-a-gpios" ]; then
-                    current_sticks=1; dt_resolved=1
-                fi
-            fi
-
-            # ------------------------------------------------------------------
-            # Case D: Mainline adc-joystick / unmultiplexed SARADC with IIO check
-            # ------------------------------------------------------------------
-            if [ "$dt_resolved" -eq 0 ] && [ -f "$of_dir/io-channels" ]; then
-                local io_sz
-                io_sz=$(wc -c < "$of_dir/io-channels" 2>/dev/null || echo 0)
-                local num_channels=$(( io_sz / 8 ))
-
-                if [ "$num_channels" -ge 4 ]; then
-                    # Check if Right Stick ADC lines (channels 0 & 1) are real or pegged at 1023
-                    if _is_iio_channel_active 0 && _is_iio_channel_active 1; then
-                        current_sticks=2
-                        [ "$num_channels" -ge 6 ] && has_triggers="Y"
-                    else
-                        current_sticks=1
-                    fi
-                    dt_resolved=1
-                elif [ "$num_channels" -ge 2 ]; then
-                    current_sticks=1
-                    dt_resolved=1
-                fi
-            fi
-        fi
-
-        # 4. EVDEV BITMASK: For x86 Handhelds (Steam Deck/ROG Ally), USB, & Bluetooth
-        if [ "$dt_resolved" -eq 0 ]; then
-            local lowest_word="${raw_abs##* }"
-            lowest_word="${lowest_word##*,}"
-            local val=$(( 0x${lowest_word:-0} )) 2>/dev/null || continue
-
-            # Stick 1: ABS_X (0x1) & ABS_Y (0x2) -> 0x3
-            if [ $(( val & 0x3 )) -eq 3 ]; then
-                current_sticks=1
-                # Stick 2: ABS_RX/RY (0x18) OR ABS_Z/RZ (0x24)
-                if [ $(( val & 0x18 )) -eq 24 ] || [ $(( val & 0x24 )) -eq 36 ]; then
-                    current_sticks=2
-                fi
-            fi
-
-            # Analog Triggers: ABS_GAS/BRAKE (0x600) OR 6-axis XInput (0x3f)
-            if [ $(( val & 0x600 )) -eq 1536 ] || [ $(( val & 0x3f )) -eq 63 ]; then
-                has_triggers="Y"
-            fi
-        fi
-
-        [ "$current_sticks" -gt "$max_sticks" ] && max_sticks="$current_sticks"
     done
 
-    ANALOG_STICKS="$max_sticks"
-    ANALOG_TRIGGERS="$has_triggers"
+    # 3. Dynamic Consensus Arbitration
+    if [ "$dt_joypad_sticks" -gt 0 ]; then
+        ANALOG_STICKS="$dt_joypad_sticks"
+        ANALOG_TRIGGERS="$dt_joypad_triggers"
+    elif [ "$has_physical_hw_stick" -ge 2 ]; then
+        ANALOG_STICKS="$has_physical_hw_stick"
+        ANALOG_TRIGGERS="$has_physical_hw_trig"
+    elif [ "$virtual_claimed_sticks" -gt 0 ]; then
+        # Anti-spoofing: ONLY reject if ARM DeviceTree is present and declared 0 sticks
+        if [ -d "/proc/device-tree" ] && [ "$has_physical_dt_joypad" -eq 1 ] && [ "$dt_joypad_sticks" -eq 0 ]; then
+            ANALOG_STICKS=0
+            ANALOG_TRIGGERS="N"
+        else
+            ANALOG_STICKS="$virtual_claimed_sticks"
+            ANALOG_TRIGGERS="$virtual_claimed_trig"
+        fi
+    elif [ "$has_physical_hw_stick" -gt 0 ]; then
+        ANALOG_STICKS="$has_physical_hw_stick"
+        ANALOG_TRIGGERS="$has_physical_hw_trig"
+    else
+        ANALOG_STICKS=0
+        ANALOG_TRIGGERS="N"
+    fi
+
+    export ANALOG_STICKS
+    export ANALOG_TRIGGERS
 }
 
 detect_dynamic_controls
