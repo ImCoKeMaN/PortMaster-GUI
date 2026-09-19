@@ -659,6 +659,10 @@ detect_dynamic_controls() {
         ANALOG_STICKS=0
         ANALOG_TRIGGERS="N"
     fi
+
+    export ANALOG_STICKS
+    export ANALOG_TRIGGERS
+
 }
 
 detect_dynamic_controls
