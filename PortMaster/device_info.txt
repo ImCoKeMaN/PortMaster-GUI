@@ -632,7 +632,7 @@ detect_dynamic_controls() {
         fi
     done
 
-    # 3. Dynamic Consensus Arbitration
+# 3. Dynamic Consensus Arbitration
     if [ "$dt_joypad_sticks" -gt 0 ]; then
         ANALOG_STICKS="$dt_joypad_sticks"
         ANALOG_TRIGGERS="$dt_joypad_triggers"
@@ -640,8 +640,12 @@ detect_dynamic_controls() {
         ANALOG_STICKS="$has_physical_hw_stick"
         ANALOG_TRIGGERS="$has_physical_hw_trig"
     elif [ "$virtual_claimed_sticks" -gt 0 ]; then
-        # Anti-spoofing: ONLY reject if ARM DeviceTree is present and declared 0 sticks
-        if [ -d "/proc/device-tree" ] && [ "$has_physical_dt_joypad" -eq 1 ] && [ "$dt_joypad_sticks" -eq 0 ]; then
+        # On x86/x86_64 devices (Steam Deck, ROG Ally, etc.), trust userspace daemons (hhd, Steam, etc.)
+        if [ "$DEVICE_HAS_X86" = "Y" ] || [ "$DEVICE_HAS_X86_64" = "Y" ] || [ ! -d "/proc/device-tree" ]; then
+            ANALOG_STICKS="$virtual_claimed_sticks"
+            ANALOG_TRIGGERS="$virtual_claimed_trig"
+        # On ARM platforms with DeviceTree: reject virtual stick claims if no physical hardware exists
+        elif [ "$dt_joypad_sticks" -eq 0 ] && [ "$has_physical_hw_stick" -eq 0 ]; then
             ANALOG_STICKS=0
             ANALOG_TRIGGERS="N"
         else
@@ -655,9 +659,6 @@ detect_dynamic_controls() {
         ANALOG_STICKS=0
         ANALOG_TRIGGERS="N"
     fi
-
-    export ANALOG_STICKS
-    export ANALOG_TRIGGERS
 }
 
 detect_dynamic_controls
