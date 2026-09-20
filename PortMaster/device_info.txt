@@ -520,6 +520,23 @@ detect_dynamic_controls() {
     local dt_joypad_sticks=0
     local dt_joypad_triggers="N"
 
+    # 0. Probe active daemons for underlying physical hardware streams (UARTs/ADCs)
+    local daemon_analog_streams=0
+    for d in trimui_inputd oga_events evsieve rg35xx-input joycond gamy steam handheld-daemon hhd; do
+        local pids
+        pids=$(pidof "$d" 2>/dev/null)
+        [ -z "$pids" ] && pids=$(ps 2>/dev/null | grep -v grep | grep "$d" | awk '{print $1}')
+        for pid in $pids; do
+            local hw_fds
+            hw_fds=$(ls -l /proc/$pid/fd 2>/dev/null | grep -E 'ttyAS[0-9]|ttyS[0-9]|ttyUSB[0-9]|adc|gpadc|saradc')
+            if [ -n "$hw_fds" ]; then
+                local ch_cnt
+                ch_cnt=$(echo "$hw_fds" | grep -E -c 'ttyAS|ttyS|adc|gpadc|saradc')
+                [ "$ch_cnt" -gt "$daemon_analog_streams" ] && daemon_analog_streams="$ch_cnt"
+            fi
+        done
+    done
+
     # 1. Authoritative Device Tree Hardware Scan (ARM SBCs)
     for dt_node in /sys/firmware/devicetree/base/*joypad* /sys/firmware/devicetree/base/*/*joypad* \
                    /sys/firmware/devicetree/base/*joystick* /sys/firmware/devicetree/base/*/*joystick* \
@@ -639,6 +656,10 @@ detect_dynamic_controls() {
     elif [ "$has_physical_hw_stick" -ge 2 ]; then
         ANALOG_STICKS="$has_physical_hw_stick"
         ANALOG_TRIGGERS="$has_physical_hw_trig"
+    elif [ "$daemon_analog_streams" -gt 0 ]; then
+        # Daemon validated with live physical streaming channels (e.g. TSPS UARTs)
+        ANALOG_STICKS="$daemon_analog_streams"
+        ANALOG_TRIGGERS="N"
     elif [ "$virtual_claimed_sticks" -gt 0 ]; then
         # On x86/x86_64 devices (Steam Deck, ROG Ally, etc.), trust userspace daemons (hhd, Steam, etc.)
         if [ "$DEVICE_HAS_X86" = "Y" ] || [ "$DEVICE_HAS_X86_64" = "Y" ] || [ ! -d "/proc/device-tree" ]; then
@@ -659,7 +680,7 @@ detect_dynamic_controls() {
         ANALOG_STICKS=0
         ANALOG_TRIGGERS="N"
     fi
-
+    
     export ANALOG_STICKS
     export ANALOG_TRIGGERS
 
