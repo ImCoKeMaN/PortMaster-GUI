@@ -2,12 +2,14 @@
 # ==============================================================================
 # PortMaster Hardware Provider (Env-backed Dynamic Loader with Fallback)
 # ==============================================================================
+from __future__ import annotations
+
 import copy
 import math
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 def _safe_int(val: Any, default: int = 0) -> int:
@@ -94,7 +96,7 @@ def _build_capabilities(info: Dict[str, Any], raw_env: Dict[str, str]) -> List[s
         "/usr/lib/aarch64-linux-gnu/libGL.so.1",
         "/usr/lib/arm-linux-gnueabihf/libGL.so.1",
         "/usr/lib/x86_64-linux-gnu/libGL.so.1",
-    ]
+        ]
     if raw_env.get("has_desktop_gl") == "Y" or any(os.path.exists(p) for p in gl_markers):
         caps.append("opengl")
     if raw_env.get("has_vulkan") == "Y" or os.path.exists("/usr/lib/libvulkan.so.1"):
@@ -110,7 +112,16 @@ def _build_capabilities(info: Dict[str, Any], raw_env: Dict[str, str]) -> List[s
         caps.append("power")
 
     # 'ultra': requires >= 4GB RAM AND excludes budget SoCs
-    low_power_cpus = ["rk3326", "h700", "a133", "a133plus", "a527", "px30", "sun50iw9", "sun50iw10"]
+    low_power_cpus = [
+        "rk3326",
+        "h700",
+        "a133",
+        "a133plus",
+        "a527",
+        "px30",
+        "sun50iw9",
+        "sun50iw10",
+        ]
     if ram_gb >= 4 and not any(lpc in cpu for lpc in low_power_cpus):
         caps.append("ultra")
 
@@ -161,7 +172,7 @@ def _build_capabilities(info: Dict[str, Any], raw_env: Dict[str, str]) -> List[s
 class HardwareDetector:
     """Consumes dynamic hardware and OS capabilities from device_info.env."""
 
-    def __init__(self, control_dir: Optional[str | Path] = None):
+    def __init__(self, control_dir: Optional[Union[str, Path]] = None):
         self.control_dir = Path(control_dir) if control_dir else _find_control_dir()
 
     def _locate_env_file(self) -> Optional[Path]:
@@ -175,7 +186,7 @@ class HardwareDetector:
             Path("/storage/roms/tools/PortMaster"),
             Path("/mnt/SDCARD/App/PortMaster"),
             Path("/opt/muos"),
-        ]
+            ]
 
         # 1. Exact match for device_info.env
         for d in search_dirs:
@@ -239,7 +250,7 @@ class HardwareDetector:
             "primary_arch": str(get_val("device_arch", "aarch64")),
             "ram": ram_mb,
             "glibc": _normalize_glibc(get_val("cfw_glibc", "Unknown")),
-        }
+            }
 
         caps_raw = str(get_val("device_capabilities", "")).strip()
         if caps_raw:
@@ -265,7 +276,7 @@ def hardware_info() -> Dict[str, Any]:
     return HardwareDetector().get_info()
 
 
-def find_device_by_resolution(resolution: tuple) -> str:
+def find_device_by_resolution(resolution: Tuple[int, int]) -> str:
     info = HardwareDetector().get_info()
     if info.get("resolution") == resolution:
         return info.get("device", "default")
@@ -274,10 +285,10 @@ def find_device_by_resolution(resolution: tuple) -> str:
 
 def expand_info(
     info: Dict[str, Any],
-    override_resolution: Optional[tuple] = None,
+    override_resolution: Optional[Tuple[int, int]] = None,
     override_ram: Optional[int] = None,
     use_old_cpu_info: bool = False,
-) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
     base_info = HardwareDetector().get_info()
     if not isinstance(info, dict):
         info = copy.deepcopy(base_info)
@@ -305,4 +316,4 @@ __all__ = [
     "find_device_by_resolution",
     "DEVICES",
     "HW_INFO",
-]
+    ]
