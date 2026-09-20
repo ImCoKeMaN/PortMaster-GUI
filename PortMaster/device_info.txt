@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# SPDX-License-Identifier: MIT
+#
 # ==============================================================================
 # PortMaster Device Information Provider (Dynamic Modernized v0.2.0)
 # ==============================================================================
