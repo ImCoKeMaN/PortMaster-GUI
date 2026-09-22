@@ -16,7 +16,7 @@ for arg in "$@"; do
     fi
 done
 
-export DEVICE_INFO_VERSION="0.4.3"
+export DEVICE_INFO_VERSION="0.2.0"
 
 # ------------------------------------------------------------------------------
 # 0. DIRECTORY SETUP
@@ -219,10 +219,21 @@ if [ "$CFW_NAME" = "RetroDECK" ]; then
     elif [ -f "/var/config/retrodeck/retrodeck.cfg" ]; then
         export CFW_VERSION="$(grep -i 'version' /var/config/retrodeck/retrodeck.cfg 2>/dev/null | cut -d= -f2 | tr -d '"\r ')"
     fi
-elif [ "$CFW_NAME" = "ROCKNIX" ]; then
-    [ -f "/etc/rocknix-release" ] && export CFW_VERSION="$(tr -d '\r\n' < /etc/rocknix-release 2>/dev/null)"
-elif [ "$CFW_NAME" = "JELOS" ]; then
-    [ -f "/etc/jelos-release" ] && export CFW_VERSION="$(tr -d '\r\n' < /etc/jelos-release 2>/dev/null)"
+elif [ "$CFW_NAME" = "ROCKNIX" ] || [ "$CFW_NAME" = "JELOS" ]; then
+    # 1. Prefer date format if present in os-release
+    if [ -f "/etc/os-release" ] || [ -f "/usr/lib/os-release" ]; then
+        OS_F="/etc/os-release"; [ ! -f "$OS_F" ] && OS_F="/usr/lib/os-release"
+        DATE_VER="$(grep -oE '\b20[2-9][0-9][0-1][0-9][0-3][0-9]\b' "$OS_F" 2>/dev/null | head -n1)"
+        [ -n "$DATE_VER" ] && export CFW_VERSION="$DATE_VER"
+    fi
+    # 2. Fallback to release file if date not found
+    if [ "$CFW_VERSION" = "Unknown" ]; then
+        if [ "$CFW_NAME" = "ROCKNIX" ] && [ -f "/etc/rocknix-release" ]; then
+            export CFW_VERSION="$(tr -d '\r\n' < /etc/rocknix-release 2>/dev/null)"
+        elif [ "$CFW_NAME" = "JELOS" ] && [ -f "/etc/jelos-release" ]; then
+            export CFW_VERSION="$(tr -d '\r\n' < /etc/jelos-release 2>/dev/null)"
+        fi
+    fi
 elif [ "$CFW_NAME" = "muOS" ]; then
     [ -f "/opt/muos/config/system/version" ] && export CFW_VERSION="$(tr -d '\r\n' < /opt/muos/config/system/version 2>/dev/null)"
 elif [ "$CFW_NAME" = "knulli" ]; then
@@ -524,41 +535,43 @@ fi
 DISPLAY_WIDTH="$(echo "$DISPLAY_WIDTH" | grep -oE '^[0-9]+' || echo "640")"
 DISPLAY_HEIGHT="$(echo "$DISPLAY_HEIGHT" | grep -oE '^[0-9]+' || echo "480")"
 
-# Normalize portrait panels to landscape
+# Track if the raw hardware panel is physically portrait (e.g., 1080x1920)
+RAW_IS_PORTRAIT=0
+
 if [ "$DISPLAY_WIDTH" -lt "$DISPLAY_HEIGHT" ]; then
+    RAW_IS_PORTRAIT=1
     TMP_W="$DISPLAY_WIDTH"
     export DISPLAY_WIDTH="$DISPLAY_HEIGHT"
     export DISPLAY_HEIGHT="$TMP_W"
 fi
 
 detect_dynamic_orientation() {
+    # 1. Kernel command line
     if [ -f "/proc/cmdline" ]; then
         local fb_rot
-        fb_rot="$(grep -oE '\bfbcon=rotate:[0-3]\b' /proc/cmdline 2>/dev/null | cut -d: -f2)"
+        fb_rot="$(grep -oE '\bfbcon=rotate:[1-3]\b' /proc/cmdline 2>/dev/null | cut -d: -f2)"
         case "$fb_rot" in
-            1) export DISPLAY_ORIENTATION=90; return ;;
-            2) export DISPLAY_ORIENTATION=180; return ;;
-            3) export DISPLAY_ORIENTATION=270; return ;;
-            0) export DISPLAY_ORIENTATION=0; return ;;
-        esac
-    fi
-
-    if [ -f "/sys/class/graphics/fb0/rotate" ]; then
-        case "$(cat /sys/class/graphics/fb0/rotate 2>/dev/null)" in
-            1) export DISPLAY_ORIENTATION=90; return ;;
+            1) export DISPLAY_ORIENTATION=90;  return ;;
             2) export DISPLAY_ORIENTATION=180; return ;;
             3) export DISPLAY_ORIENTATION=270; return ;;
         esac
     fi
 
+    # 2. Linux DRM panel orientation
     for p_orient in /sys/class/drm/card*-*/panel_orientation; do
         [ -f "$p_orient" ] || continue
         case "$(cat "$p_orient" 2>/dev/null)" in
-            "left_side_up") export DISPLAY_ORIENTATION=270; return ;;
-            "right_side_up") export DISPLAY_ORIENTATION=90; return ;;
-            "upside_down") export DISPLAY_ORIENTATION=180; return ;;
+            "left_side_up")   export DISPLAY_ORIENTATION=270; return ;;
+            "right_side_up")  export DISPLAY_ORIENTATION=90;  return ;;
+            "upside_down")    export DISPLAY_ORIENTATION=180; return ;;
         esac
     done
+
+    # 3. Native Portrait AMOLED / DSI Hardware Panel (1080x1920 -> 270 deg)
+    if [ "$RAW_IS_PORTRAIT" -eq 1 ]; then
+        export DISPLAY_ORIENTATION=270
+        return
+    fi
 
     export DISPLAY_ORIENTATION=0
 }
